@@ -1,0 +1,106 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #f4f6f9;
+    color: #333;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+header {
+    background: #1a3a5c;
+    color: #fff;
+    padding: 2rem;
+    text-align: center;
+}
+
+header h1 { font-size: 1.8rem; margin-bottom: 0.4rem; }
+.subtitulo { color: #a8c4e0; font-size: 0.95rem; }
+
+main { flex: 1; padding: 2rem; max-width: 860px; margin: 0 auto; width: 100%; }
+
+/* Formulário de upload */
+.form-upload {
+    background: #fff;
+    border-radius: 8px;
+    padding: 2rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    margin-top: 1.5rem;
+}
+
+.campo-upload { margin-bottom: 1.4rem; }
+.campo-upload label { display: block; font-weight: 600; margin-bottom: 0.4rem; color: #1a3a5c; }
+.campo-upload input[type="file"] { width: 100%; padding: 0.5rem; border: 1px solid #c8d4e0; border-radius: 4px; }
+
+.btn-analisar {
+    background: #1a3a5c;
+    color: #fff;
+    border: none;
+    padding: 0.75rem 2rem;
+    border-radius: 4px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.btn-analisar:hover { background: #255180; }
+
+/* Alertas */
+.alertas { margin-bottom: 1rem; }
+.alerta { background: #fff3cd; border: 1px solid #ffc107; padding: 0.75rem 1rem; border-radius: 4px; color: #856404; }
+
+/* Cards de resumo */
+.resumo {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 1.2rem 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    flex: 1 1 130px;
+    text-align: center;
+    border-top: 4px solid #1a3a5c;
+}
+.card.destaque-ok  { border-top-color: #2e7d32; }
+.card.destaque-alerta { border-top-color: #f57c00; }
+.card.destaque-erro { border-top-color: #c62828; }
+
+.card-valor { display: block; font-size: 2rem; font-weight: 700; color: #1a3a5c; }
+.card.destaque-ok .card-valor { color: #2e7d32; }
+.card.destaque-alerta .card-valor { color: #f57c00; }
+.card.destaque-erro .card-valor { color: #c62828; }
+.card-label { font-size: 0.8rem; color: #666; margin-top: 0.3rem; display: block; }
+
+.mensagem-info { background: #e3f2fd; border-left: 4px solid #1565c0; padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1.5rem; }
+
+/* Ações */
+.acoes { display: flex; gap: 1rem; flex-wrap: wrap; }
+.btn-download {
+    background: #2e7d32;
+    color: #fff;
+    padding: 0.75rem 1.5rem;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 0.95rem;
+    transition: background 0.2s;
+}
+.btn-download:hover { background: #388e3c; }
+.btn-voltar {
+    background: #fff;
+    color: #1a3a5c;
+    padding: 0.75rem 1.5rem;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 0.95rem;
+    border: 1px solid #1a3a5c;
+    transition: background 0.2s;
+}
+.btn-voltar:hover { background: #e8f0f8; }
+
+footer { background: #1a3a5c; color: #7fa8cc; text-align: center; padding: 1rem; font-size: 0.85rem; }

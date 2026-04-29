@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conciliação de Planilhas — Condomínio</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>Conciliação de Planilhas</h1>
+        <p class="subtitulo">Carregue as planilhas de parâmetros e dados para iniciar a análise.</p>
+    </header>
+
+    <main>
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <div class="alertas">
+                {% for msg in messages %}<p class="alerta">{{ msg }}</p>{% endfor %}
+            </div>
+        {% endif %}
+        {% endwith %}
+
+        <form action="/analisar" method="POST" enctype="multipart/form-data" class="form-upload">
+            <div class="campo-upload">
+                <label for="parametros">Planilha de Parâmetros</label>
+                <input type="file" id="parametros" name="parametros" accept=".xlsx,.xls" required>
+            </div>
+            <div class="campo-upload">
+                <label for="dados">Planilha de Dados</label>
+                <input type="file" id="dados" name="dados" accept=".xlsx,.xls" required>
+            </div>
+            <button type="submit" class="btn-analisar">Analisar</button>
+        </form>
+    </main>
+
+    <footer>
+        <p>Condomínio — Sistema de Conciliação</p>
+    </footer>
+</body>
+</html>

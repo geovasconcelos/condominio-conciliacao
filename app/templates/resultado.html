@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resultado da Análise — Condomínio</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>Resultado da Conciliação</h1>
+    </header>
+
+    <main>
+        <section class="resumo">
+            <div class="card">
+                <span class="card-valor">{{ resultado.total_registros }}</span>
+                <span class="card-label">Total de Registros</span>
+            </div>
+            <div class="card">
+                <span class="card-valor">{{ resultado.total_parametros }}</span>
+                <span class="card-label">Total de Parâmetros</span>
+            </div>
+            <div class="card destaque-ok">
+                <span class="card-valor">{{ resultado.conciliados }}</span>
+                <span class="card-label">Conciliados</span>
+            </div>
+            <div class="card destaque-alerta">
+                <span class="card-valor">{{ resultado.divergentes }}</span>
+                <span class="card-label">Divergentes</span>
+            </div>
+            <div class="card destaque-erro">
+                <span class="card-valor">{{ resultado.nao_encontrados }}</span>
+                <span class="card-label">Não Encontrados</span>
+            </div>
+        </section>
+
+        {% if resultado.mensagem %}
+        <p class="mensagem-info">{{ resultado.mensagem }}</p>
+        {% endif %}
+
+        <div class="acoes">
+            <a href="/download/{{ session_id }}" class="btn-download">Baixar Excel da Análise</a>
+            <a href="/" class="btn-voltar">Nova Análise</a>
+        </div>
+    </main>
+
+    <footer>
+        <p>Condomínio — Sistema de Conciliação</p>
+    </footer>
+</body>
+</html>
