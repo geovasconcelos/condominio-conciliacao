@@ -3,39 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Conciliação de Planilhas — Condomínio</title>
+    <title>OGS Serviços — Conciliação de Planilhas</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <header>
-        <h1>Conciliação de Planilhas</h1>
-        <p class="subtitulo">Carregue as planilhas de parâmetros e dados para iniciar a análise.</p>
-    </header>
 
-    <main>
-        {% with messages = get_flashed_messages() %}
-        {% if messages %}
-            <div class="alertas">
-                {% for msg in messages %}<p class="alerta">{{ msg }}</p>{% endfor %}
-            </div>
-        {% endif %}
-        {% endwith %}
+<!-- Spinner de processamento -->
+<div class="spinner-overlay" id="spinner">
+    <div class="spinner"></div>
+    <span>Processando análise…</span>
+</div>
 
-        <form action="/analisar" method="POST" enctype="multipart/form-data" class="form-upload">
-            <div class="campo-upload">
-                <label for="parametros">Planilha de Parâmetros</label>
-                <input type="file" id="parametros" name="parametros" accept=".xlsx,.xls" required>
-            </div>
-            <div class="campo-upload">
-                <label for="dados">Planilha de Dados</label>
-                <input type="file" id="dados" name="dados" accept=".xlsx,.xls" required>
-            </div>
-            <button type="submit" class="btn-analisar">Analisar</button>
-        </form>
+<!-- Topbar -->
+<header class="topbar">
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="OGS Serviços" class="logo">
+    <div class="brand">
+        <span class="brand-name">OGS Serviços</span>
+        <span class="brand-sub">Sistema de Conciliação</span>
+    </div>
+    <span class="page-title">Conciliação de Planilhas Excel</span>
+</header>
+
+<!-- Layout principal -->
+<div class="layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div>
+            <p class="sidebar-section-title">Carregar Arquivos</p>
+            <form action="/analisar" method="POST" enctype="multipart/form-data" id="form-upload" class="upload-group">
+
+                <!-- Parâmetros -->
+                <div class="upload-field">
+                    <label>
+                        <svg class="icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/>
+                        </svg>
+                        Planilha de Parâmetros
+                    </label>
+                    <div class="dropzone" id="dz-parametros">
+                        <input type="file" name="parametros" id="parametros" accept=".xlsx,.xls" required>
+                        <p class="dz-text">Clique ou arraste o arquivo</p>
+                        <p class="dz-filename" id="fn-parametros"></p>
+                    </div>
+                </div>
+
+                <!-- Dados -->
+                <div class="upload-field">
+                    <label>
+                        <svg class="icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z"/>
+                        </svg>
+                        Base de Dados
+                    </label>
+                    <div class="dropzone" id="dz-dados">
+                        <input type="file" name="dados" id="dados" accept=".xlsx,.xls" required>
+                        <p class="dz-text">Clique ou arraste o arquivo</p>
+                        <p class="dz-filename" id="fn-dados"></p>
+                    </div>
+                </div>
+
+                {% with messages = get_flashed_messages() %}
+                {% if messages %}
+                <div class="alertas">
+                    {% for msg in messages %}<p class="alerta">{{ msg }}</p>{% endfor %}
+                </div>
+                {% endif %}
+                {% endwith %}
+
+                <button type="submit" class="btn-analisar" id="btn-analisar">Analisar</button>
+            </form>
+        </div>
+
+        <div class="sidebar-info">
+            Formatos aceitos: <strong style="color:#29B6F6">.xlsx</strong> e <strong style="color:#29B6F6">.xls</strong><br>
+            Tamanho máximo: 10 MB por arquivo.
+        </div>
+    </aside>
+
+    <!-- Conteúdo principal -->
+    <main class="main">
+        <div class="welcome-card">
+            <svg class="welcome-icon" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="8" y="12" width="48" height="40" rx="4" stroke="#1E88E5" stroke-width="2" fill="#E3F2FD"/>
+                <path d="M8 20h48" stroke="#1E88E5" stroke-width="2"/>
+                <path d="M20 12v8M32 12v8M44 12v8" stroke="#1E88E5" stroke-width="2"/>
+                <path d="M16 32h10M16 40h14M16 48h8" stroke="#29B6F6" stroke-width="2" stroke-linecap="round"/>
+                <path d="M36 36l6 6 10-10" stroke="#2E7D32" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h2>Pronto para analisar</h2>
+            <p>Carregue a planilha de parâmetros e a base de dados na barra lateral para iniciar a conciliação.</p>
+        </div>
     </main>
 
-    <footer>
-        <p>Condomínio — Sistema de Conciliação</p>
-    </footer>
+</div>
+
+<footer>
+    OGS Serviços &copy; 2025 — Sistema de Conciliação de Planilhas
+</footer>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

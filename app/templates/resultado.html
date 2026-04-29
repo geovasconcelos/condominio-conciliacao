@@ -3,50 +3,123 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Resultado da Análise — Condomínio</title>
+    <title>Resultado da Análise — OGS Serviços</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <header>
-        <h1>Resultado da Conciliação</h1>
-    </header>
 
-    <main>
-        <section class="resumo">
-            <div class="card">
-                <span class="card-valor">{{ resultado.total_registros }}</span>
-                <span class="card-label">Total de Registros</span>
+<!-- Topbar -->
+<header class="topbar">
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="OGS Serviços" class="logo">
+    <div class="brand">
+        <span class="brand-name">OGS Serviços</span>
+        <span class="brand-sub">Sistema de Conciliação</span>
+    </div>
+    <span class="page-title">Resultado da Análise</span>
+</header>
+
+<div class="layout">
+
+    <!-- Sidebar — nova análise -->
+    <aside class="sidebar">
+        <div>
+            <p class="sidebar-section-title">Nova Análise</p>
+            <form action="/analisar" method="POST" enctype="multipart/form-data" id="form-upload" class="upload-group">
+
+                <div class="upload-field">
+                    <label>
+                        <svg class="icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/>
+                        </svg>
+                        Planilha de Parâmetros
+                    </label>
+                    <div class="dropzone">
+                        <input type="file" name="parametros" accept=".xlsx,.xls" required>
+                        <p class="dz-text">Clique ou arraste o arquivo</p>
+                        <p class="dz-filename" id="fn-parametros"></p>
+                    </div>
+                </div>
+
+                <div class="upload-field">
+                    <label>
+                        <svg class="icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z"/>
+                        </svg>
+                        Base de Dados
+                    </label>
+                    <div class="dropzone">
+                        <input type="file" name="dados" accept=".xlsx,.xls" required>
+                        <p class="dz-text">Clique ou arraste o arquivo</p>
+                        <p class="dz-filename" id="fn-dados"></p>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-analisar" id="btn-analisar">Analisar Novamente</button>
+            </form>
+        </div>
+
+        <div class="sidebar-info">
+            Formatos aceitos: <strong style="color:#29B6F6">.xlsx</strong> e <strong style="color:#29B6F6">.xls</strong><br>
+            Tamanho máximo: 10 MB por arquivo.
+        </div>
+    </aside>
+
+    <!-- Resultado -->
+    <main class="main">
+
+        <div>
+            <p class="section-heading">Resumo da Conciliação</p>
+            <div class="resumo">
+                <div class="card">
+                    <span class="card-valor">{{ resultado.total_registros }}</span>
+                    <span class="card-label">Total de Registros</span>
+                </div>
+                <div class="card">
+                    <span class="card-valor">{{ resultado.total_parametros }}</span>
+                    <span class="card-label">Parâmetros</span>
+                </div>
+                <div class="card ok">
+                    <span class="card-valor">{{ resultado.conciliados }}</span>
+                    <span class="card-label">Conciliados</span>
+                </div>
+                <div class="card warn">
+                    <span class="card-valor">{{ resultado.divergentes }}</span>
+                    <span class="card-label">Divergentes</span>
+                </div>
+                <div class="card erro">
+                    <span class="card-valor">{{ resultado.nao_encontrados }}</span>
+                    <span class="card-label">Não Encontrados</span>
+                </div>
             </div>
-            <div class="card">
-                <span class="card-valor">{{ resultado.total_parametros }}</span>
-                <span class="card-label">Total de Parâmetros</span>
-            </div>
-            <div class="card destaque-ok">
-                <span class="card-valor">{{ resultado.conciliados }}</span>
-                <span class="card-label">Conciliados</span>
-            </div>
-            <div class="card destaque-alerta">
-                <span class="card-valor">{{ resultado.divergentes }}</span>
-                <span class="card-label">Divergentes</span>
-            </div>
-            <div class="card destaque-erro">
-                <span class="card-valor">{{ resultado.nao_encontrados }}</span>
-                <span class="card-label">Não Encontrados</span>
-            </div>
-        </section>
+        </div>
 
         {% if resultado.mensagem %}
         <p class="mensagem-info">{{ resultado.mensagem }}</p>
         {% endif %}
 
-        <div class="acoes">
-            <a href="/download/{{ session_id }}" class="btn-download">Baixar Excel da Análise</a>
-            <a href="/" class="btn-voltar">Nova Análise</a>
+        <div>
+            <p class="section-heading">Exportar</p>
+            <div class="acoes">
+                <a href="/download/{{ session_id }}" class="btn-download">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M5 20h14v-2H5v2zm7-18L5.33 9h4.34v6h4.66V9h4.34L12 2z" transform="rotate(180,12,12)"/>
+                        <path d="M19 9h-4V3H9v6H5l7 7 7-7z"/>
+                    </svg>
+                    Baixar Excel da Análise
+                </a>
+                <a href="/" class="btn-voltar">
+                    ← Voltar
+                </a>
+            </div>
         </div>
-    </main>
 
-    <footer>
-        <p>Condomínio — Sistema de Conciliação</p>
-    </footer>
+    </main>
+</div>
+
+<footer>
+    OGS Serviços &copy; 2025 — Sistema de Conciliação de Planilhas
+</footer>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>
