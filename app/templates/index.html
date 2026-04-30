@@ -8,55 +8,34 @@
 </head>
 <body>
 
-<!-- Spinner de processamento -->
 <div class="spinner-overlay" id="spinner">
     <div class="spinner"></div>
     <span>Processando análise…</span>
 </div>
 
-<!-- Topbar -->
 <header class="topbar">
     <img src="{{ url_for('static', filename='img/logo.png') }}" alt="OGS Serviços" class="logo">
     <div class="brand">
         <span class="brand-name">OGS Serviços</span>
         <span class="brand-sub">Sistema de Conciliação</span>
     </div>
-    <span class="page-title">Conciliação de Planilhas Excel</span>
+    <span class="page-title">Análise de Cobranças Condominiais</span>
 </header>
 
-<!-- Layout principal -->
 <div class="layout">
 
     <!-- Sidebar -->
     <aside class="sidebar">
         <div>
-            <p class="sidebar-section-title">Carregar Arquivos</p>
+            <p class="sidebar-section-title">{% if resultado %}Nova Análise{% else %}Carregar Arquivo{% endif %}</p>
             <form action="/analisar" method="POST" enctype="multipart/form-data" id="form-upload" class="upload-group">
 
-                <!-- Parâmetros -->
                 <div class="upload-field">
                     <label>
-                        <svg class="icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/>
-                        </svg>
-                        Planilha de Parâmetros
-                    </label>
-                    <div class="dropzone" id="dz-parametros">
-                        <input type="file" name="parametros" id="parametros" accept=".xlsx,.xls" required>
-                        <p class="dz-text">Clique ou arraste o arquivo</p>
-                        <p class="dz-filename" id="fn-parametros"></p>
-                    </div>
-                </div>
-
-                <!-- Dados -->
-                <div class="upload-field">
-                    <label>
-                        <svg class="icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z"/>
-                        </svg>
+                        <svg class="icon" viewBox="0 0 24 24"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z"/></svg>
                         Base de Dados
                     </label>
-                    <div class="dropzone" id="dz-dados">
+                    <div class="dropzone">
                         <input type="file" name="dados" id="dados" accept=".xlsx,.xls" required>
                         <p class="dz-text">Clique ou arraste o arquivo</p>
                         <p class="dz-filename" id="fn-dados"></p>
@@ -75,14 +54,26 @@
             </form>
         </div>
 
+        {% if resultado %}
+        <div style="margin-top:1rem;">
+            <a href="/download/{{ session_id }}" class="btn-download-side">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7z"/><path d="M5 20h14v-2H5v2z"/></svg>
+                Baixar Excel
+            </a>
+        </div>
+        {% endif %}
+
         <div class="sidebar-info">
             Formatos aceitos: <strong style="color:#29B6F6">.xlsx</strong> e <strong style="color:#29B6F6">.xls</strong><br>
-            Tamanho máximo: 10 MB por arquivo.
+            Tamanho máximo: 10 MB.
         </div>
     </aside>
 
     <!-- Conteúdo principal -->
     <main class="main">
+
+        {% if not resultado %}
+        <!-- Estado inicial -->
         <div class="welcome-card">
             <svg class="welcome-icon" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <rect x="8" y="12" width="48" height="40" rx="4" stroke="#1E88E5" stroke-width="2" fill="#E3F2FD"/>
@@ -92,10 +83,175 @@
                 <path d="M36 36l6 6 10-10" stroke="#2E7D32" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <h2>Pronto para analisar</h2>
-            <p>Carregue a planilha de parâmetros e a base de dados na barra lateral para iniciar a conciliação.</p>
+            <p>Carregue a base de dados na barra lateral para iniciar a análise de consistência.</p>
         </div>
-    </main>
 
+        {% else %}
+        <!-- Resultados da análise -->
+
+        <!-- Cabeçalho do resultado -->
+        <div class="resultado-header">
+            <div class="resultado-meta">
+                <span class="badge-periodo">{{ resultado.periodo_inicio }} → {{ resultado.periodo_fim }}</span>
+                <span class="badge-emissao">Total emitido: <strong>{{ resultado.total_emissao }}</strong></span>
+            </div>
+            <a href="/download/{{ session_id }}" class="btn-download">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7z"/><path d="M5 20h14v-2H5v2z"/></svg>
+                Baixar Excel Completo
+            </a>
+        </div>
+
+        <!-- Seção 1: Visão Geral -->
+        <div>
+            <p class="section-heading">Visão Geral</p>
+            <div class="resumo">
+                <div class="card">
+                    <span class="card-valor">{{ resultado.total_registros }}</span>
+                    <span class="card-label">Registros</span>
+                </div>
+                <div class="card">
+                    <span class="card-valor">{{ resultado.total_unidades }}</span>
+                    <span class="card-label">Unidades</span>
+                </div>
+                <div class="card">
+                    <span class="card-valor">{{ resultado.qt_normal }}</span>
+                    <span class="card-label">Cobranças Normais</span>
+                </div>
+                <div class="card">
+                    <span class="card-valor">{{ resultado.qt_extra }}</span>
+                    <span class="card-label">Cobranças Extras</span>
+                </div>
+                <div class="card {% if resultado.qt_acordo > 0 %}warn{% endif %}">
+                    <span class="card-valor">{{ resultado.qt_acordo }}</span>
+                    <span class="card-label">Acordos</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Seção 2: Qualidade dos dados -->
+        <div>
+            <p class="section-heading">Qualidade dos Dados</p>
+            <div class="checks-grid">
+                <div class="check-item {% if not resultado.tem_nulos %}check-ok{% else %}check-erro{% endif %}">
+                    <span class="check-icon">{% if not resultado.tem_nulos %}✓{% else %}✗{% endif %}</span>
+                    <div>
+                        <strong>Dados ausentes</strong>
+                        <span>{% if not resultado.tem_nulos %}Nenhum campo crítico vazio{% else %}Campos com valores ausentes detectados{% endif %}</span>
+                    </div>
+                </div>
+                <div class="check-item {% if resultado.unidades_taxa_inconsistente %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.unidades_taxa_inconsistente %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Taxa Ordinária</strong>
+                        <span>
+                            Valores: {{ resultado.taxas_unicas | join(" | ") }}<br>
+                            {% if resultado.unidades_taxa_inconsistente %}
+                            Variação nas unidades: <em>{{ resultado.unidades_taxa_inconsistente | join(", ") }}</em>
+                            {% else %}Consistente em todas as unidades{% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Seção 3: Análise de atrasos -->
+        <div>
+            <p class="section-heading">Análise de Atrasos — Cobranças Normais</p>
+            <div class="resumo">
+                <div class="card ok">
+                    <span class="card-valor">{{ resultado.no_prazo }}</span>
+                    <span class="card-label">No Prazo</span>
+                </div>
+                <div class="card">
+                    <span class="card-valor">{{ resultado.compensacao }}</span>
+                    <span class="card-label">Compensação Bancária (1-4 dias)</span>
+                </div>
+                <div class="card {% if resultado.atrasados_reais > 0 %}warn{% else %}ok{% endif %}">
+                    <span class="card-valor">{{ resultado.atrasados_reais }}</span>
+                    <span class="card-label">Atrasos Reais (≥5 dias)</span>
+                </div>
+                <div class="card {% if resultado.total_criticos > 0 %}erro{% else %}ok{% endif %}">
+                    <span class="card-valor">{{ resultado.total_criticos }}</span>
+                    <span class="card-label">Atrasados SEM Multa</span>
+                </div>
+            </div>
+
+            {% if resultado.dist_atraso %}
+            <div class="dist-atraso">
+                <p class="dist-title">Distribuição dos dias de atraso (todos os pagamentos pós-vencimento):</p>
+                <div class="dist-bars">
+                    {% set max_val = resultado.dist_atraso.values() | max %}
+                    {% for faixa, qt in resultado.dist_atraso.items() %}
+                    <div class="dist-bar-row">
+                        <span class="dist-label">{{ faixa }}</span>
+                        <div class="dist-bar-wrap">
+                            <div class="dist-bar {% if faixa in ['5-7 dias','8-15 dias','16-30 dias','>30 dias'] %}dist-bar-warn{% else %}dist-bar-ok{% endif %}"
+                                 style="width: {{ (qt / max_val * 100) | round | int }}%"></div>
+                        </div>
+                        <span class="dist-qt">{{ qt }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="dist-nota">* Atrasos de 1-4 dias são normais no sistema de compensação bancária de boletos.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Seção 4: Multa -->
+        <div>
+            <p class="section-heading">Consistência da Multa</p>
+            <div class="checks-grid">
+                <div class="check-item check-ok">
+                    <span class="check-icon">✓</span>
+                    <div>
+                        <strong>Cobranças com multa</strong>
+                        <span>{{ resultado.total_com_multa }} registros | % médio: <strong>{{ resultado.multa_media }}%</strong> (faixa: {{ resultado.multa_min }}% – {{ resultado.multa_max }}%)</span>
+                    </div>
+                </div>
+                <div class="check-item {% if resultado.multa_inconsistente_qt > 0 %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.multa_inconsistente_qt > 0 %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Multa fora da faixa 1,5%–3,0%</strong>
+                        <span>{% if resultado.multa_inconsistente_qt > 0 %}{{ resultado.multa_inconsistente_qt }} registros com % atípico{% else %}Todos dentro da faixa esperada{% endif %}</span>
+                    </div>
+                </div>
+                <div class="check-item {% if resultado.multa_em_zero_qt > 0 %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.multa_em_zero_qt > 0 %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Multa sobre Taxa Ordinária = R$ 0</strong>
+                        <span>{% if resultado.multa_em_zero_qt > 0 %}{{ resultado.multa_em_zero_qt }} ocorrências — verificar na aba "Multa sobre Taxa Zero" do Excel{% else %}Sem ocorrências{% endif %}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Seção 5: Acordos e Atípicos -->
+        <div>
+            <p class="section-heading">Acordos e Valores Atípicos</p>
+            <div class="checks-grid">
+                <div class="check-item {% if resultado.total_acordos > 0 %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.total_acordos > 0 %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Acordos registrados</strong>
+                        <span>
+                            {% if resultado.total_acordos > 0 %}
+                            {{ resultado.total_acordos }} acordos | {{ resultado.valor_acordos }} | Unidades: {{ resultado.unidades_acordo | join(", ") }}
+                            {% else %}Nenhum acordo no período{% endif %}
+                        </span>
+                    </div>
+                </div>
+                <div class="check-item {% if resultado.total_outliers > 0 %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.total_outliers > 0 %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Totais atípicos (cobranças normais)</strong>
+                        <span>{% if resultado.total_outliers > 0 %}{{ resultado.total_outliers }} registros fora do padrão IQR — ver aba "Dados Completos" no Excel{% else %}Nenhum valor atípico{% endif %}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% endif %}
+    </main>
 </div>
 
 <footer>
