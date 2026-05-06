@@ -13,8 +13,12 @@ def create_app():
         secret = secrets.token_hex(32)
     app.secret_key = secret
     app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_UPLOAD_MB", 10)) * 1024 * 1024
-    app.config["UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "..", "uploads")
-    app.config["OUTPUT_FOLDER"] = os.path.join(os.path.dirname(__file__), "..", "outputs")
+    upload_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
+    output_dir = os.path.join(os.path.dirname(__file__), "..", "outputs")
+    os.makedirs(upload_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    app.config["UPLOAD_FOLDER"] = upload_dir
+    app.config["OUTPUT_FOLDER"] = output_dir
 
     from app.routes.main import main_bp
     from app.routes.analise import analise_bp
