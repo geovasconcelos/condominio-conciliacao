@@ -32,6 +32,18 @@
 
                 <div class="upload-field">
                     <label>
+                        <svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>
+                        Planilha de Parâmetros
+                    </label>
+                    <div class="dropzone">
+                        <input type="file" name="parametros" id="parametros" accept=".xlsx,.xls" required>
+                        <p class="dz-text">Clique ou arraste o arquivo</p>
+                        <p class="dz-filename" id="fn-parametros"></p>
+                    </div>
+                </div>
+
+                <div class="upload-field">
+                    <label>
                         <svg class="icon" viewBox="0 0 24 24"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z"/></svg>
                         Base de Dados
                     </label>
@@ -151,6 +163,73 @@
                         </span>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Seção 3: Conciliação com parâmetros -->
+        <div>
+            <p class="section-heading">Conciliação com Parâmetros</p>
+
+            {% if resultado.campos_faltantes %}
+            <div class="mensagem-info" style="border-left-color:#C62828;background:#FFEBEE;margin-bottom:.75rem">
+                <strong>Campos obrigatórios ausentes na planilha de parâmetros:</strong>
+                {{ resultado.campos_faltantes | join(", ") }}<br>
+                <small>A análise comparativa pode estar incompleta.</small>
+            </div>
+            {% endif %}
+
+            <div class="checks-grid">
+                <div class="check-item {% if resultado.sem_parametro %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.sem_parametro %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Unidades nos dados sem parâmetro</strong>
+                        <span>{% if resultado.sem_parametro %}{{ resultado.sem_parametro | join(", ") }}{% else %}Todas as unidades estão parametrizadas{% endif %}</span>
+                    </div>
+                </div>
+                <div class="check-item {% if resultado.sem_dados %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.sem_dados %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Unidades no parâmetro sem dados</strong>
+                        <span>{% if resultado.sem_dados %}{{ resultado.sem_dados | join(", ") }}{% else %}Nenhuma{% endif %}</span>
+                    </div>
+                </div>
+                <div class="check-item {% if resultado.qt_inconsist_taxa > 0 %}check-erro{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.qt_inconsist_taxa > 0 %}✗{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Taxa Ordinária divergente</strong>
+                        <span>{% if resultado.qt_inconsist_taxa > 0 %}{{ resultado.qt_inconsist_taxa }} ocorrências — detalhe na aba "Taxa Ordinária — Divergências" do Excel{% else %}Todas as taxas conferem com os parâmetros{% endif %}</span>
+                    </div>
+                </div>
+                <div class="check-item {% if resultado.qt_inconsist_extra > 0 %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.qt_inconsist_extra > 0 %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Taxas Extras divergentes ({{ resultado.qt_taxas_extras_param }} taxas parametrizadas)</strong>
+                        <span>{% if resultado.qt_inconsist_extra > 0 %}{{ resultado.qt_inconsist_extra }} ocorrências — ver aba "Taxas Extras — Divergências"{% else %}Todos os valores conferem{% endif %}</span>
+                    </div>
+                </div>
+                <div class="check-item {% if resultado.qt_prob_agua > 0 %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.qt_prob_agua > 0 %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Taxa de Água — ausências ou zeros</strong>
+                        <span>{% if resultado.qt_prob_agua > 0 %}{{ resultado.qt_prob_agua }} meses sem cobrança de água — ver aba "Taxa de Água — Problemas"{% else %}Todas as unidades pagaram água em todos os meses{% endif %}</span>
+                    </div>
+                </div>
+                <div class="check-item {% if resultado.qt_prob_medicao > 0 %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.qt_prob_medicao > 0 %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Medição e Leitura de Água (ref. {{ resultado.ref_medicao }})</strong>
+                        <span>{% if resultado.qt_prob_medicao > 0 %}{{ resultado.qt_prob_medicao }} divergências — ver aba "Medição — Divergências"{% else %}Todos os valores conferem com o parâmetro{% endif %}</span>
+                    </div>
+                </div>
+                {% if resultado.sindicos %}
+                <div class="check-item check-ok">
+                    <span class="check-icon">✓</span>
+                    <div>
+                        <strong>Síndico(s): unidade(s) {{ resultado.sindicos | join(", ") }}</strong>
+                        <span>Isenção de Taxa Ordinária: <strong>{% if resultado.isencao_sindico %}Sim{% else %}Não{% endif %}</strong> — divergências incluídas em "Taxa Ordinária — Divergências"</span>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
 
