@@ -14,7 +14,7 @@ Estrutura esperada (linhas do Excel):
   31      Separador
   32      Título Matriz
   33      Sub-cabeçalho
-  34-83   Dados por unidade (cols A-E)
+  34-83   Dados por unidade (cols A-D): Unidade | Taxa Ord. | Taxa Extra S/N | Obs
 """
 import re
 import openpyxl
@@ -110,7 +110,7 @@ def ler_parametros(path: str) -> dict:
             "obs":    v(row, 5),
         })
 
-    # Matriz por unidade (linhas 34-83, cols A-E)
+    # Matriz por unidade (linhas 34-83, cols A-D): Unidade | Taxa Ord. | Taxa Extra S/N | Obs
     for row in range(34, 84):
         unidade_raw = v(row, 1)
         if not unidade_raw:
@@ -120,12 +120,10 @@ def ler_parametros(path: str) -> dict:
         except (ValueError, TypeError):
             unidade = str(unidade_raw).strip()
 
-        taxa_raw = v(row, 3)
         params["unidades"][unidade] = {
-            "proprietario":   v(row, 2),
-            "taxa_ordinaria": _to_float(taxa_raw),   # None → usa padrão global
-            "tem_taxa_extra": str(v(row, 4) or "N").strip().upper() == "S",
-            "observacoes":    v(row, 5),
+            "taxa_ordinaria": _to_float(v(row, 2)),   # None → usa padrão global
+            "tem_taxa_extra": str(v(row, 3) or "N").strip().upper() == "S",
+            "observacoes":    v(row, 4),
         }
 
     return params
