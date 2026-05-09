@@ -1,8 +1,14 @@
 import os
+from datetime import datetime
 from flask import Flask
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Capturado uma vez no startup: representa o momento em que o Railway subiu o container.
+_DEPLOY_TIME = datetime.now().strftime("%d/%m/%Y %H:%M")
+_COMMIT_SHA  = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")
+_VERSION     = _COMMIT_SHA[:7] if _COMMIT_SHA else "local"
 
 
 def create_app():
@@ -25,5 +31,9 @@ def create_app():
 
     app.register_blueprint(main_bp)
     app.register_blueprint(analise_bp)
+
+    @app.context_processor
+    def inject_version():
+        return {"app_version": _VERSION, "deploy_time": _DEPLOY_TIME}
 
     return app

@@ -354,6 +354,17 @@ footer {
     font-size: .78rem;
 }
 
+.version-badge {
+    margin-left: 1.25rem;
+    padding: .1rem .5rem;
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: .72rem;
+    color: rgba(255,255,255,.55);
+    letter-spacing: .02em;
+}
+
 /* ── Resultado header ─────────────────────────────────────── */
 .resultado-header {
     display: flex;
