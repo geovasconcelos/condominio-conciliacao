@@ -384,18 +384,269 @@ def processar_conciliacao(path_params: str, path_dados: str,
                  pd.DataFrame(inconsistencias_extra),
                  pd.DataFrame(boletos_ausentes),
                  sem_parametro, sem_dados, campos_faltantes,
-                 resultado, output_dir, session_id)
+                 resultado, params, output_dir, session_id)
 
     return resultado
 
 
 # ── Geração do Excel ────────────────────────────────────────────────────────────
 
+def _aba_inadimplencia(ws, df, params, df_inadimplentes):
+    """Aba 1 — Relatório de inadimplência detalhado por unidade."""
+    from collections import defaultdict
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    RED    = "B71C1C"; RLIGHT = "FFEBEE"
+    NAVY   = "1A3C6E"; WHITE  = "FFFFFF"
+    LGRAY  = "F0F4F8"; GOLD   = "FFF8E1"
+    MGRAY  = "ECEFF1"
+
+    def _f(c):   return PatternFill("solid", fgColor=c)
+    def _ft(bold=False, color="1A2B3C", size=10):
+        return Font(name="Calibri", bold=bold, color=color, size=size)
+    def _bd(c="B0BEC5"):
+        s = Side(style="thin", color=c); return Border(left=s, right=s, top=s, bottom=s)
+    def _al(h="left"):
+        return Alignment(horizontal=h, vertical="center", wrap_text=False)
+
+    NCOLS = 9
+    COL_W = [13, 12, 8, 42, 14, 14, 14, 13, 14]
+    COL_H = ["Vencimento","Competência","Cód.","Descrição",
+             "Valor (R$)","Juros (R$)","Multa (R$)","Atualiz. (R$)","Total (R$)"]
+    for i, w in enumerate(COL_W, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ── Título ─────────────────────────────────────────────────────────────────
+    ws.row_dimensions[1].height = 32
+    ws.merge_cells(f"A1:{get_column_letter(NCOLS)}1")
+    c = ws["A1"]
+    c.value = "RELATÓRIO DE INADIMPLÊNCIA"
+    c.font  = _ft(bold=True, color=WHITE, size=14)
+    c.fill  = _f(RED); c.alignment = _al("center")
+
+    ws.row_dimensions[2].height = 15
+    ws.merge_cells(f"A2:{get_column_letter(NCOLS)}2")
+    c = ws["A2"]
+    hoje_str = pd.Timestamp.today().strftime("%d/%m/%Y")
+    c.value = (f"Multa: {params['pct_multa']:.2f}%  |  "
+               f"Juros: {params['pct_juros']:.2f}% a.m. (pró-rata)  |  "
+               f"Valores atualizados até {hoje_str}  |  "
+               f"(*) Taxa de Água estimada a partir do último boleto pago da unidade")
+    c.font  = _ft(size=9, color="455A64"); c.fill = _f("FAFAFA")
+    c.alignment = _al("left")
+
+    if df_inadimplentes is None or len(df_inadimplentes) == 0:
+        ws.merge_cells(f"A3:{get_column_letter(NCOLS)}3")
+        ws["A3"].value = "Nenhuma inadimplência detectada."
+        ws["A3"].font  = _ft(bold=True, color="2E7D32", size=11)
+        return
+
+    r = 3
+
+    # Parâmetros de cálculo
+    pct_multa  = float(params.get("pct_multa")  or 2.0)
+    pct_juros  = float(params.get("pct_juros")  or 1.0)
+    carencia   = int(params.get("carencia_dias") or 4)
+    dia_venc   = int(params.get("dia_vencimento") or 10)
+    taxa_med_p = float(params.get("taxa_medicao") or 0.0)
+    taxas_ext  = params.get("taxas_extras", [])
+    ref_date   = pd.Timestamp.today().normalize()
+
+    df_normal = df[df["Tipo Cobrança"] == "NORMAL"].copy() if "Tipo Cobrança" in df.columns else df.copy()
+
+    # Último boleto pago por unidade → estima água e medição
+    agua_est = {}
+    med_est  = {}
+    for unidade, grp in df_normal.groupby("Unidade"):
+        col_a = "Taxa de Água"
+        col_m = "Medição e Leitura de Água"
+        grp_a = grp[grp[col_a].notna() & (grp[col_a] > 0)] if col_a in grp.columns else pd.DataFrame()
+        if len(grp_a):
+            agua_est[unidade] = float(grp_a.loc[grp_a["Vencimento_dt"].idxmax(), col_a])
+        grp_m = grp[grp[col_m].notna() & (grp[col_m] > 0)] if col_m in grp.columns else pd.DataFrame()
+        if len(grp_m):
+            med_est[unidade]  = float(grp_m.loc[grp_m["Vencimento_dt"].idxmax(), col_m])
+
+    # Agrupa meses ausentes por unidade
+    unidades_meses = defaultdict(list)
+    for _, row in df_inadimplentes.iterrows():
+        unidades_meses[str(row["Unidade"])].append(str(row["Competência"]))
+
+    cat_totals  = defaultdict(lambda: {"valor": 0.0, "juros": 0.0, "multa": 0.0, "total": 0.0})
+    grand       = {"valor": 0.0, "juros": 0.0, "multa": 0.0, "total": 0.0}
+
+    def _col_hdr(r):
+        for ci, h in enumerate(COL_H, 1):
+            c = ws.cell(row=r, column=ci)
+            c.value = h
+            c.font  = _ft(bold=True, color=WHITE, size=10)
+            c.fill  = _f(NAVY); c.border = _bd(); c.alignment = _al("center")
+        ws.row_dimensions[r].height = 18
+
+    def _charge_row(r, venc_s, comp_s, desc, valor, juros, multa, bg=WHITE):
+        atualiz = 0.0
+        total   = round(valor + juros + multa, 2)
+        row_vals = [venc_s, comp_s, "-", desc,
+                    round(valor,2), round(juros,2), round(multa,2), atualiz, total]
+        for ci, v in enumerate(row_vals, 1):
+            c = ws.cell(row=r, column=ci)
+            c.value = v; c.fill = _f(bg); c.border = _bd()
+            c.font  = _ft(size=10)
+            if ci >= 5:
+                c.alignment = _al("right")
+                if isinstance(v, float): c.number_format = '#,##0.00'
+            else:
+                c.alignment = _al("left")
+        ws.row_dimensions[r].height = 16
+        return total
+
+    for unidade in sorted(unidades_meses.keys(), key=lambda x: x.zfill(10)):
+        competencias = sorted(unidades_meses[unidade])
+
+        # Cabeçalho da unidade
+        ws.merge_cells(f"A{r}:{get_column_letter(NCOLS)}{r}")
+        c = ws[f"A{r}"]
+        c.value = f"  UNIDADE  {unidade}"
+        c.font  = _ft(bold=True, color=WHITE, size=11)
+        c.fill  = _f(RED); c.alignment = _al("left")
+        ws.row_dimensions[r].height = 22
+        r += 1
+
+        _col_hdr(r); r += 1
+
+        u_tot = {"valor": 0.0, "juros": 0.0, "multa": 0.0, "total": 0.0}
+        bg_toggle = 0
+
+        for comp in competencias:
+            mes, ano = int(comp[:2]), int(comp[3:])
+            try:
+                venc_date = pd.Timestamp(year=ano, month=mes, day=dia_venc)
+            except Exception:
+                venc_date = pd.Timestamp(year=ano, month=mes, day=1)
+            venc_s = venc_date.strftime("%d/%m/%Y")
+            dias   = max(0, (ref_date - venc_date).days - carencia)
+
+            p_u    = params["unidades"].get(unidade, {})
+            t_ord  = float(p_u.get("taxa_ordinaria") or params["taxa_ord_padrao"] or 0)
+            t_agua = agua_est.get(unidade, 0.0)
+            t_med  = med_est.get(unidade, taxa_med_p)
+
+            charges = []
+            if t_ord  > 0.05: charges.append(("Taxa Ordinária",              t_ord,  "Taxa Ordinária"))
+            if t_agua > 0.05: charges.append(("Taxa de Água (*)",            t_agua, "Taxa de Água"))
+            if t_med  > 0.05: charges.append(("Medição e Leitura de Água",   t_med,  "Medição e Leitura de Água"))
+
+            if p_u.get("tem_taxa_extra"):
+                for te in taxas_ext:
+                    if not te["valor"] or te["valor"] < 0.05:
+                        continue
+                    in_p = True
+                    if te["inicio"] and te["fim"]:
+                        d0 = pd.Timestamp(year=te["inicio"][1], month=te["inicio"][0], day=1)
+                        d1 = pd.Timestamp(year=te["fim"][1],    month=te["fim"][0],    day=28)
+                        in_p = d0 <= venc_date <= d1
+                    if in_p:
+                        charges.append((te["nome"], float(te["valor"]), te["nome"]))
+
+            for desc, valor, cat_key in charges:
+                multa  = valor * pct_multa / 100
+                juros  = valor * pct_juros / 100 * (dias / 30) if dias > 0 else 0.0
+                bg     = LGRAY if bg_toggle % 2 == 0 else WHITE
+                total  = _charge_row(r, venc_s, comp, desc,
+                                     valor, juros, multa, bg)
+                r += 1; bg_toggle += 1
+
+                for k, v in [("valor",valor),("juros",juros),("multa",multa),("total",total)]:
+                    u_tot[k]              += v
+                    cat_totals[cat_key][k] += v
+                    grand[k]               += v
+
+        # Linha de total da unidade
+        ws.merge_cells(f"A{r}:D{r}")
+        c = ws[f"A{r}"]
+        c.value = "Total"; c.font = _ft(bold=True, size=10)
+        c.fill = _f(GOLD); c.border = _bd(); c.alignment = _al("right")
+        for ci, key in zip([5,6,7], ["valor","juros","multa"]):
+            c = ws.cell(row=r, column=ci)
+            c.value = round(u_tot[key], 2); c.fill = _f(GOLD)
+            c.font = _ft(bold=True, size=10); c.border = _bd()
+            c.alignment = _al("right"); c.number_format = '#,##0.00'
+        c = ws.cell(row=r, column=8)                               # atualiz
+        c.value = 0.0; c.fill = _f(GOLD); c.border = _bd()
+        c.alignment = _al("right"); c.number_format = '#,##0.00'
+        c = ws.cell(row=r, column=9)                               # total
+        c.value = round(u_tot["total"], 2); c.fill = _f(GOLD)
+        c.font = _ft(bold=True, size=10); c.border = _bd()
+        c.alignment = _al("right"); c.number_format = '#,##0.00'
+        ws.row_dimensions[r].height = 17
+        r += 2  # linha em branco entre unidades
+
+    # ── Resumo por categoria ────────────────────────────────────────────────────
+    ws.merge_cells(f"A{r}:{get_column_letter(NCOLS)}{r}")
+    c = ws[f"A{r}"]
+    c.value = "Resumo por categoria"
+    c.font  = _ft(bold=True, color=WHITE, size=12)
+    c.fill  = _f(NAVY); c.alignment = _al("left")
+    ws.row_dimensions[r].height = 24
+    r += 1
+
+    # Cabeçalhos do resumo: Descrição(A-D) | Valor(E) | Juros(F) | Multa(G) | Atualiz(H) | Total(I)
+    ws.merge_cells(f"A{r}:D{r}")
+    c = ws[f"A{r}"]
+    c.value = "Descrição"; c.font = _ft(bold=True, color=WHITE, size=10)
+    c.fill = _f(NAVY); c.border = _bd(); c.alignment = _al("left")
+    for col_idx, h in zip([5,6,7,8,9],
+                          ["Valor (R$)","Juros (R$)","Multa (R$)","Atualiz. (R$)","Total (R$)"]):
+        c = ws.cell(row=r, column=col_idx)
+        c.value = h; c.font = _ft(bold=True, color=WHITE, size=10)
+        c.fill = _f(NAVY); c.border = _bd(); c.alignment = _al("center")
+    ws.row_dimensions[r].height = 18
+    r += 1
+
+    cat_order = ["Taxa Ordinária","Taxa de Água","Medição e Leitura de Água"]
+    extra_cats = [k for k in cat_totals if k not in cat_order]
+    for i, cat in enumerate(cat_order + sorted(extra_cats)):
+        if cat not in cat_totals:
+            continue
+        tots = cat_totals[cat]
+        bg   = LGRAY if i % 2 == 0 else WHITE
+        ws.merge_cells(f"A{r}:D{r}")
+        c = ws[f"A{r}"]
+        c.value = cat.replace(" (*)", "")
+        c.fill = _f(bg); c.font = _ft(size=10)
+        c.border = _bd(); c.alignment = _al("left")
+        for col_idx, (key, is_zero) in zip([5,6,7,8,9], [
+                ("valor",False),("juros",False),("multa",False),("_",True),("total",False)]):
+            c = ws.cell(row=r, column=col_idx)
+            v = 0.0 if is_zero else tots.get(key, 0.0)
+            c.value = round(v, 2); c.fill = _f(bg); c.font = _ft(size=10)
+            c.border = _bd(); c.alignment = _al("right"); c.number_format = '#,##0.00'
+        ws.row_dimensions[r].height = 16
+        r += 1
+
+    # Total geral do resumo
+    ws.merge_cells(f"A{r}:D{r}")
+    c = ws[f"A{r}"]
+    c.value = "Total"; c.font = _ft(bold=True, size=10)
+    c.fill = _f(GOLD); c.border = _bd(); c.alignment = _al("right")
+    for col_idx, (key, is_zero) in zip([5,6,7,8,9], [
+            ("valor",False),("juros",False),("multa",False),("_",True),("total",False)]):
+        c = ws.cell(row=r, column=col_idx)
+        v = 0.0 if is_zero else grand.get(key, 0.0)
+        c.value = round(v, 2); c.fill = _f(GOLD)
+        c.font = _ft(bold=True, size=10); c.border = _bd()
+        c.alignment = _al("right"); c.number_format = '#,##0.00'
+    ws.row_dimensions[r].height = 18
+
+    ws.freeze_panes = "A3"
+
+
 def _gerar_excel(df, atrasados_sem_multa,
                  multa_inconsistente, multa_em_zero,
                  df_taxa, df_agua, df_medicao, df_extra, df_inadimplentes,
                  sem_param, sem_dados, campos_faltantes,
-                 resultado, output_dir, session_id):
+                 resultado, params, output_dir, session_id):
     import openpyxl
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
@@ -411,8 +662,10 @@ def _gerar_excel(df, atrasados_sem_multa,
     def left():   return Alignment(horizontal="left",  vertical="center")
 
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Resumo"
+    ws_inadin = wb.active
+    ws_inadin.title = "Inadimplência"
+    _aba_inadimplencia(ws_inadin, df, params, df_inadimplentes)
+    ws = wb.create_sheet("Resumo")
 
     def titulo(ws, texto, row, ncols=6):
         lc = get_column_letter(ncols)
@@ -525,7 +778,7 @@ def _gerar_excel(df, atrasados_sem_multa,
             "Esperado (R$)":"Esperado (R$)","Encontrado (R$)":"Encontrado (R$)",
             "Diferença (R$)":"Diferença (R$)"}, "E65100")
 
-    aba_df(wb,"Inadimplência — Boletos Ausentes", df_inadimplentes,
+    aba_df(wb,"Boletos Ausentes", df_inadimplentes,
            {"Unidade":"Unidade","Competência":"Competência",
             "Taxa Esperada (R$)":"Taxa Esperada (R$)","Motivo":"Motivo"}, "C62828")
 
