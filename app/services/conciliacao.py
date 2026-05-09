@@ -185,11 +185,12 @@ def processar_conciliacao(path_params: str, path_dados: str,
                 if pd.isna(venc):
                     continue
 
-                # Verifica se está no período esperado
-                mes_venc = (venc.month, venc.year)
+                # Verifica se está no período esperado (comparação por data, não tupla)
                 no_periodo = True
                 if inicio and fim:
-                    no_periodo = inicio <= mes_venc <= fim
+                    inicio_date = pd.Timestamp(year=inicio[1], month=inicio[0], day=1)
+                    fim_date    = pd.Timestamp(year=fim[1],    month=fim[0],    day=28)
+                    no_periodo  = inicio_date <= venc <= fim_date
 
                 valor_real = row[col]
                 if pd.isna(valor_real):
@@ -216,18 +217,31 @@ def processar_conciliacao(path_params: str, path_dados: str,
                     })
 
     # ── 7. Multa ────────────────────────────────────────────────
-    carencia     = params["carencia_dias"]
-    pct_multa_p  = params["pct_multa"]
+    carencia    = params["carencia_dias"]
+    pct_multa_p = params["pct_multa"]
 
-    df_normal["atrasado_real"] = df_normal["dias_atraso"] > carencia
-    df_normal["tem_multa"]     = df_normal["Receita com Multas"] > 0
+    # Síndico isento não entra nas verificações de atraso e multa
+    if params["isencao_sindico"] and sindicos:
+        df_multa = df_normal[~df_normal["Unidade"].isin(sindicos)].copy()
+    else:
+        df_multa = df_normal.copy()
 
-    atrasados_reais      = int(df_normal["atrasado_real"].sum())
-    atrasados_sem_multa  = df_normal[df_normal["atrasado_real"] & ~df_normal["tem_multa"]]
-    total_criticos       = len(atrasados_sem_multa)
+    # Inadimplente = pago com atraso OU boleto sem crédito com vencimento já passado
+    hoje = pd.Timestamp.today().normalize()
+    sem_credito = (
+        df_multa["Credito_dt"].isna() &
+        df_multa["Vencimento_dt"].notna() &
+        (df_multa["Vencimento_dt"] < hoje)
+    )
+    df_multa["atrasado_real"] = (df_multa["dias_atraso"] > carencia) | sem_credito
+    df_multa["tem_multa"]     = df_multa["Receita com Multas"].fillna(0) > 0
 
-    com_multa_df = df_normal[df_normal["atrasado_real"] & df_normal["tem_multa"]].copy()
-    com_multa_df = com_multa_df[com_multa_df["Taxa Ordinária"] > 0].copy()
+    atrasados_reais     = int(df_multa["atrasado_real"].sum())
+    atrasados_sem_multa = df_multa[df_multa["atrasado_real"] & ~df_multa["tem_multa"]]
+    total_criticos      = len(atrasados_sem_multa)
+
+    com_multa_df = df_multa[df_multa["atrasado_real"] & df_multa["tem_multa"]].copy()
+    com_multa_df = com_multa_df[com_multa_df["Taxa Ordinária"].fillna(0) > 0].copy()
     com_multa_df["pct_multa_calc"] = (
         com_multa_df["Receita com Multas"] / com_multa_df["Taxa Ordinária"] * 100
     )
@@ -235,8 +249,8 @@ def processar_conciliacao(path_params: str, path_dados: str,
         (com_multa_df["pct_multa_calc"] < pct_multa_p * 0.75) |
         (com_multa_df["pct_multa_calc"] > pct_multa_p * 1.5)
     ]
-    multa_em_zero = df_normal[
-        (df_normal["Taxa Ordinária"] == 0) & (df_normal["Receita com Multas"] > 0)
+    multa_em_zero = df_multa[
+        (df_multa["Taxa Ordinária"].fillna(0) == 0) & (df_multa["Receita com Multas"].fillna(0) > 0)
     ]
 
     # ── 8. Estatísticas gerais ────────────────────────────────
