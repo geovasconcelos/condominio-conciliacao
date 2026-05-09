@@ -7,6 +7,7 @@ load_dotenv()
 
 # Capturado uma vez no startup: representa o momento em que o Railway subiu o container.
 _DEPLOY_TIME = datetime.now().strftime("%d/%m/%Y %H:%M")
+_CURRENT_YEAR = datetime.now().year
 _COMMIT_SHA  = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")
 _VERSION     = _COMMIT_SHA[:7] if _COMMIT_SHA else "local"
 
@@ -34,6 +35,6 @@ def create_app():
 
     @app.context_processor
     def inject_version():
-        return {"app_version": _VERSION, "deploy_time": _DEPLOY_TIME}
+        return {"app_version": _VERSION, "deploy_time": _DEPLOY_TIME, "current_year": _CURRENT_YEAR}
 
     return app
