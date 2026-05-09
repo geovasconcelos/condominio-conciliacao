@@ -130,6 +130,39 @@ def processar_conciliacao(path_params: str, path_dados: str,
                     "Motivo":          "Síndico isento" if isento else "Divergência de taxa",
                 })
 
+    # ── 3b. Inadimplência — boletos ausentes na 004A ─────────────
+    # A 004A só contém registros PAGOS. Meses sem registro = inadimplência.
+    boletos_ausentes = []
+    if taxa_padrao > 0:
+        all_months = pd.period_range(
+            df["Vencimento_dt"].min().to_period("M"),
+            df["Vencimento_dt"].max().to_period("M"),
+            freq="M"
+        )
+        df_n_mes = df_normal.copy()
+        df_n_mes["_mes"] = df_n_mes["Vencimento_dt"].dt.to_period("M")
+
+        for unidade, p in params["unidades"].items():
+            isento = unidade in sindicos and params["isencao_sindico"]
+            if isento:
+                continue
+            taxa_esp = p["taxa_ordinaria"] or taxa_padrao
+            if not taxa_esp or taxa_esp < 0.05:
+                continue
+            regs_u = df_n_mes[df_n_mes["Unidade"] == unidade]
+            for mes in all_months:
+                regs_mes = regs_u[regs_u["_mes"] == mes]
+                max_taxa = float(regs_mes["Taxa Ordinária"].max()) if len(regs_mes) > 0 else 0.0
+                if pd.isna(max_taxa):
+                    max_taxa = 0.0
+                if max_taxa < 0.05:
+                    boletos_ausentes.append({
+                        "Unidade":            unidade,
+                        "Competência":        f"{mes.month:02d}/{mes.year}",
+                        "Taxa Esperada (R$)": taxa_esp,
+                        "Motivo":             "Boleto não localizado" if len(regs_mes) == 0 else "Taxa ordinária zero no boleto",
+                    })
+
     # ── 4. Taxa de Água ────────────────────────────────────────
     problemas_agua = []
     if "Taxa de Água" in df.columns:
@@ -314,6 +347,9 @@ def processar_conciliacao(path_params: str, path_dados: str,
         "sem_dados":          sem_dados,
         # Taxa ordinária
         "qt_inconsist_taxa":  len(inconsistencias_taxa),
+        # Inadimplência (boletos ausentes)
+        "qt_boletos_ausentes": len(boletos_ausentes),
+        "unidades_inadimplentes": sorted(set(b["Unidade"] for b in boletos_ausentes)),
         # Água
         "qt_prob_agua":       len(problemas_agua),
         "qt_prob_medicao":    len(problemas_medicao),
@@ -346,6 +382,7 @@ def processar_conciliacao(path_params: str, path_dados: str,
                  pd.DataFrame(problemas_agua),
                  pd.DataFrame(problemas_medicao),
                  pd.DataFrame(inconsistencias_extra),
+                 pd.DataFrame(boletos_ausentes),
                  sem_parametro, sem_dados, campos_faltantes,
                  resultado, output_dir, session_id)
 
@@ -356,7 +393,7 @@ def processar_conciliacao(path_params: str, path_dados: str,
 
 def _gerar_excel(df, atrasados_sem_multa,
                  multa_inconsistente, multa_em_zero,
-                 df_taxa, df_agua, df_medicao, df_extra,
+                 df_taxa, df_agua, df_medicao, df_extra, df_inadimplentes,
                  sem_param, sem_dados, campos_faltantes,
                  resultado, output_dir, session_id):
     import openpyxl
@@ -442,6 +479,13 @@ def _gerar_excel(df, atrasados_sem_multa,
        ", ".join(sem_dados) if sem_dados else "Nenhuma",
        "E65100" if sem_dados else "2E7D32"); r+=1
 
+    r+=1; titulo(ws,"INADIMPLÊNCIA",r); r+=1
+    kv(ws,r,"Boletos ausentes na 004A",resultado["qt_boletos_ausentes"],
+       "C62828" if resultado["qt_boletos_ausentes"] else "2E7D32"); r+=1
+    kv(ws,r,"Unidades inadimplentes",
+       ", ".join(resultado["unidades_inadimplentes"]) if resultado["unidades_inadimplentes"] else "Nenhuma",
+       "C62828" if resultado["unidades_inadimplentes"] else "2E7D32"); r+=1
+
     r+=1; titulo(ws,"INCONSISTÊNCIAS DE VALORES",r); r+=1
     kv(ws,r,"Taxa Ordinária divergente",resultado["qt_inconsist_taxa"],
        "C62828" if resultado["qt_inconsist_taxa"] else "2E7D32"); r+=1
@@ -480,6 +524,10 @@ def _gerar_excel(df, atrasados_sem_multa,
            {"Taxa":"Taxa","Unidade":"Unidade","Vencimento":"Vencimento",
             "Esperado (R$)":"Esperado (R$)","Encontrado (R$)":"Encontrado (R$)",
             "Diferença (R$)":"Diferença (R$)"}, "E65100")
+
+    aba_df(wb,"Inadimplência — Boletos Ausentes", df_inadimplentes,
+           {"Unidade":"Unidade","Competência":"Competência",
+            "Taxa Esperada (R$)":"Taxa Esperada (R$)","Motivo":"Motivo"}, "C62828")
 
     aba_df(wb,"Atrasados sem Multa", atrasados_sem_multa,
            {"Unidade":"Unidade","Vencimento_dt":"Vencimento","Credito_dt":"Crédito",
