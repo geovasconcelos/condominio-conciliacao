@@ -157,10 +157,8 @@ def processar_conciliacao(path_params: str, path_dados: str,
                     max_taxa = 0.0
                 if max_taxa < 0.05:
                     boletos_ausentes.append({
-                        "Unidade":            unidade,
-                        "Competência":        f"{mes.month:02d}/{mes.year}",
-                        "Taxa Esperada (R$)": taxa_esp,
-                        "Motivo":             "Boleto não localizado" if len(regs_mes) == 0 else "Taxa ordinária zero no boleto",
+                        "Unidade":     unidade,
+                        "Competência": f"{mes.month:02d}/{mes.year}",
                     })
 
     # ── 4. Taxa de Água ────────────────────────────────────────
@@ -777,10 +775,6 @@ def _gerar_excel(df, atrasados_sem_multa,
            {"Taxa":"Taxa","Unidade":"Unidade","Vencimento":"Vencimento",
             "Esperado (R$)":"Esperado (R$)","Encontrado (R$)":"Encontrado (R$)",
             "Diferença (R$)":"Diferença (R$)"}, "E65100")
-
-    aba_df(wb,"Boletos Ausentes", df_inadimplentes,
-           {"Unidade":"Unidade","Competência":"Competência",
-            "Taxa Esperada (R$)":"Taxa Esperada (R$)","Motivo":"Motivo"}, "C62828")
 
     aba_df(wb,"Atrasados sem Multa", atrasados_sem_multa,
            {"Unidade":"Unidade","Vencimento_dt":"Vencimento","Credito_dt":"Crédito",
