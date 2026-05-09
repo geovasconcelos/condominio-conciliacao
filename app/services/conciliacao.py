@@ -109,19 +109,25 @@ def processar_conciliacao(path_params: str, path_dados: str,
         isento = unidade in sindicos and params["isencao_sindico"]
         taxa_esperada = 0.0 if isento else (p["taxa_ordinaria"] or taxa_padrao)
 
-        for _, row in grp.iterrows():
-            taxa_real = row["Taxa Ordinária"]
+        # Agrupa por mês e verifica apenas o maior valor do mês.
+        # Cada mês pode ter múltiplas linhas NORMAL (taxa ordinária + outros encargos);
+        # a linha de outros encargos tem taxa=0 e não deve ser verificada individualmente.
+        grp = grp.copy()
+        grp["_mes"] = grp["Vencimento_dt"].dt.to_period("M")
+        for mes, grp_mes in grp.groupby("_mes"):
+            taxa_real = grp_mes["Taxa Ordinária"].max()
             if pd.isna(taxa_real):
-                continue
+                taxa_real = 0.0
             diff = abs(taxa_real - taxa_esperada)
             if diff > 0.05:
+                row = grp_mes.iloc[0]
                 inconsistencias_taxa.append({
-                    "Unidade":        unidade,
-                    "Vencimento":     row["Vencimento_dt"].strftime("%d/%m/%Y") if pd.notna(row["Vencimento_dt"]) else "-",
-                    "Esperado (R$)":  taxa_esperada,
-                    "Encontrado (R$)":taxa_real,
-                    "Diferença (R$)": taxa_real - taxa_esperada,
-                    "Motivo":         "Síndico isento" if isento else "Divergência de taxa",
+                    "Unidade":         unidade,
+                    "Vencimento":      row["Vencimento_dt"].strftime("%m/%Y") if pd.notna(row["Vencimento_dt"]) else "-",
+                    "Esperado (R$)":   taxa_esperada,
+                    "Encontrado (R$)": taxa_real,
+                    "Diferença (R$)":  taxa_real - taxa_esperada,
+                    "Motivo":          "Síndico isento" if isento else "Divergência de taxa",
                 })
 
     # ── 4. Taxa de Água ────────────────────────────────────────
