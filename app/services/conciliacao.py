@@ -132,16 +132,27 @@ def processar_conciliacao(path_params: str, path_dados: str,
 
     # ── 3b. Inadimplência — boletos ausentes na 004A ─────────────
     # A 004A só contém registros PAGOS. Meses sem registro = inadimplência.
+    # Exclusão: unidades com ACORDO posterior ao mês ausente tiveram a dívida regularizada.
     boletos_ausentes = []
-    if taxa_padrao > 0:
-        all_months = pd.period_range(
-            df["Vencimento_dt"].min().to_period("M"),
-            df["Vencimento_dt"].max().to_period("M"),
-            freq="M"
-        )
-        df_n_mes = df_normal.copy()
-        df_n_mes["_mes"] = df_n_mes["Vencimento_dt"].dt.to_period("M")
 
+    all_months = pd.period_range(
+        df["Vencimento_dt"].min().to_period("M"),
+        df["Vencimento_dt"].max().to_period("M"),
+        freq="M"
+    )
+    df_n_mes = df_normal.copy()
+    df_n_mes["_mes"] = df_n_mes["Vencimento_dt"].dt.to_period("M")
+    df_e_mes = df_extra.copy()
+    df_e_mes["_mes"] = df_e_mes["Vencimento_dt"].dt.to_period("M")
+    df_ac = df_acordo.copy()
+    df_ac["_mes"] = df_ac["Vencimento_dt"].dt.to_period("M")
+    acordo_meses = {
+        u: set(g["_mes"].unique())
+        for u, g in df_ac.groupby("Unidade")
+    }
+
+    # NORMAL: boleto de taxa ordinária ausente
+    if taxa_padrao > 0:
         for unidade, p in params["unidades"].items():
             isento = unidade in sindicos and params["isencao_sindico"]
             if isento:
@@ -149,17 +160,58 @@ def processar_conciliacao(path_params: str, path_dados: str,
             taxa_esp = p["taxa_ordinaria"] or taxa_padrao
             if not taxa_esp or taxa_esp < 0.05:
                 continue
-            regs_u = df_n_mes[df_n_mes["Unidade"] == unidade]
+            regs_u   = df_n_mes[df_n_mes["Unidade"] == unidade]
+            u_acords = acordo_meses.get(unidade, set())
             for mes in all_months:
                 regs_mes = regs_u[regs_u["_mes"] == mes]
                 max_taxa = float(regs_mes["Taxa Ordinária"].max()) if len(regs_mes) > 0 else 0.0
                 if pd.isna(max_taxa):
                     max_taxa = 0.0
                 if max_taxa < 0.05:
+                    if any(a >= mes for a in u_acords):
+                        continue  # débito regularizado via ACORDO
                     boletos_ausentes.append({
                         "Unidade":     unidade,
                         "Competência": f"{mes.month:02d}/{mes.year}",
+                        "tipo_inadin": "NORMAL",
                     })
+
+    # EXTRA: boleto de taxas extras ausente (unidades com tem_taxa_extra=True)
+    if params["taxas_extras"]:
+        def _extra_ativo(mes):
+            for te in params["taxas_extras"]:
+                if not te["valor"] or te["valor"] < 0.05:
+                    continue
+                if te["inicio"] and te["fim"]:
+                    p_ini = pd.Period(year=te["inicio"][1], month=te["inicio"][0], freq="M")
+                    p_fim = pd.Period(year=te["fim"][1],    month=te["fim"][0],    freq="M")
+                    if p_ini <= mes <= p_fim:
+                        return True
+                else:
+                    return True
+            return False
+
+        meses_extra_ativos = [m for m in all_months if _extra_ativo(m)]
+        normal_set = {(b["Unidade"], b["Competência"]) for b in boletos_ausentes}
+
+        for unidade, p in params["unidades"].items():
+            if not p.get("tem_taxa_extra"):
+                continue
+            regs_u   = df_e_mes[df_e_mes["Unidade"] == unidade]
+            u_acords = acordo_meses.get(unidade, set())
+            for mes in meses_extra_ativos:
+                comp_str = f"{mes.month:02d}/{mes.year}"
+                if (unidade, comp_str) in normal_set:
+                    continue  # já listado como NORMAL (inclui encargos extras)
+                if len(regs_u[regs_u["_mes"] == mes]) > 0:
+                    continue  # boleto EXTRA existe
+                if any(a >= mes for a in u_acords):
+                    continue  # regularizado via ACORDO
+                boletos_ausentes.append({
+                    "Unidade":     unidade,
+                    "Competência": comp_str,
+                    "tipo_inadin": "EXTRA",
+                })
 
     # ── 4. Taxa de Água ────────────────────────────────────────
     problemas_agua = []
@@ -389,6 +441,21 @@ def processar_conciliacao(path_params: str, path_dados: str,
 
 # ── Geração do Excel ────────────────────────────────────────────────────────────
 
+def _add_nota(ws, row, ncols, text):
+    """Linha de cabeçalho explicativo padronizada para todas as abas."""
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    ws.merge_cells(f"A{row}:{get_column_letter(ncols)}{row}")
+    c = ws[f"A{row}"]
+    c.value = text
+    c.fill  = PatternFill("solid", fgColor="E3F2FD")
+    c.font  = Font(name="Calibri", size=9, color="1A3C6E")
+    c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    s = Side(style="medium", color="1E88E5")
+    c.border = Border(left=s)
+    ws.row_dimensions[row].height = 72
+
+
 def _aba_inadimplencia(ws, df, params, df_inadimplentes):
     """Aba 1 — Relatório de inadimplência detalhado por unidade."""
     from collections import defaultdict
@@ -423,9 +490,25 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
     c.font  = _ft(bold=True, color=WHITE, size=14)
     c.fill  = _f(RED); c.alignment = _al("center")
 
-    ws.row_dimensions[2].height = 15
-    ws.merge_cells(f"A2:{get_column_letter(NCOLS)}2")
-    c = ws["A2"]
+    _add_nota(ws, 2, NCOLS,
+        "O QUE ESTA ABA VERIFICA: dois tipos de inadimplência são detectados — "
+        "(A) BOLETO NORMAL ausente: unidade sem registro NORMAL com taxa ordinária > R$ 0,05 no mês; "
+        "a composição exibe taxa ordinária, água, medição e taxas extras (quando aplicável). "
+        "(B) BOLETO EXTRA ausente: unidades com taxa extra no cadastro que não possuem registro EXTRA "
+        "na 004A em meses em que pelo menos uma taxa extra está vigente, mas que pagaram o boleto NORMAL; "
+        "a composição exibe apenas as taxas extras devidas. "
+        "A base 004A contém apenas registros de pagamentos efetivados; ausência de registro = ausência de pagamento.\n"
+        "CRITÉRIOS DE EXCLUSÃO: (1) Síndico isento — unidade não é verificada quando isenção está configurada; "
+        "(2) Regularização via ACORDO — se a unidade possui registro de ACORDO na 004A com vencimento igual ou "
+        "posterior ao mês ausente, o débito é considerado regularizado e o mês não é listado.\n"
+        "CÁLCULO DE ENCARGOS: Multa = " + f"{params['pct_multa']:.2f}% sobre o valor principal | "
+        f"Juros = {params['pct_juros']:.2f}% a.m. pró-rata (dias corridos após carência de "
+        f"{params.get('carencia_dias', 4)} dias) | (*) Taxa de Água estimada pelo último boleto pago da unidade."
+    )
+
+    ws.row_dimensions[3].height = 15
+    ws.merge_cells(f"A3:{get_column_letter(NCOLS)}3")
+    c = ws["A3"]
     hoje_str = pd.Timestamp.today().strftime("%d/%m/%Y")
     c.value = (f"Multa: {params['pct_multa']:.2f}%  |  "
                f"Juros: {params['pct_juros']:.2f}% a.m. (pró-rata)  |  "
@@ -435,12 +518,12 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
     c.alignment = _al("left")
 
     if df_inadimplentes is None or len(df_inadimplentes) == 0:
-        ws.merge_cells(f"A3:{get_column_letter(NCOLS)}3")
-        ws["A3"].value = "Nenhuma inadimplência detectada."
-        ws["A3"].font  = _ft(bold=True, color="2E7D32", size=11)
+        ws.merge_cells(f"A4:{get_column_letter(NCOLS)}4")
+        ws["A4"].value = "Nenhuma inadimplência detectada."
+        ws["A4"].font  = _ft(bold=True, color="2E7D32", size=11)
         return
 
-    r = 3
+    r = 4
 
     # Parâmetros de cálculo
     pct_multa  = float(params.get("pct_multa")  or 2.0)
@@ -466,10 +549,11 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
         if len(grp_m):
             med_est[unidade]  = float(grp_m.loc[grp_m["Vencimento_dt"].idxmax(), col_m])
 
-    # Agrupa meses ausentes por unidade
+    # Agrupa meses ausentes por unidade: (competência, tipo_inadin)
     unidades_meses = defaultdict(list)
     for _, row in df_inadimplentes.iterrows():
-        unidades_meses[str(row["Unidade"])].append(str(row["Competência"]))
+        tipo = str(row["tipo_inadin"]) if "tipo_inadin" in row.index else "NORMAL"
+        unidades_meses[str(row["Unidade"])].append((str(row["Competência"]), tipo))
 
     cat_totals  = defaultdict(lambda: {"valor": 0.0, "juros": 0.0, "multa": 0.0, "total": 0.0})
     grand       = {"valor": 0.0, "juros": 0.0, "multa": 0.0, "total": 0.0}
@@ -516,7 +600,7 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
         u_tot = {"valor": 0.0, "juros": 0.0, "multa": 0.0, "total": 0.0}
         bg_toggle = 0
 
-        for comp in competencias:
+        for comp, tipo in sorted(competencias, key=lambda x: x[0]):
             mes, ano = int(comp[:2]), int(comp[3:])
             try:
                 venc_date = pd.Timestamp(year=ano, month=mes, day=dia_venc)
@@ -531,9 +615,11 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
             t_med  = med_est.get(unidade, taxa_med_p)
 
             charges = []
-            if t_ord  > 0.05: charges.append(("Taxa Ordinária",              t_ord,  "Taxa Ordinária"))
-            if t_agua > 0.05: charges.append(("Taxa de Água (*)",            t_agua, "Taxa de Água"))
-            if t_med  > 0.05: charges.append(("Medição e Leitura de Água",   t_med,  "Medição e Leitura de Água"))
+            # Boleto NORMAL ausente: todos os encargos; EXTRA ausente: só taxas extras
+            if tipo == "NORMAL":
+                if t_ord  > 0.05: charges.append(("Taxa Ordinária",            t_ord,  "Taxa Ordinária"))
+                if t_agua > 0.05: charges.append(("Taxa de Água (*)",          t_agua, "Taxa de Água"))
+                if t_med  > 0.05: charges.append(("Medição e Leitura de Água", t_med,  "Medição e Leitura de Água"))
 
             if p_u.get("tem_taxa_extra"):
                 for te in taxas_ext:
@@ -640,6 +726,260 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
     ws.freeze_panes = "A3"
 
 
+def _aba_fluxo_pagamentos(ws, df, params):
+    """Aba — Fluxo de pagamentos mensal por tipo de cobrança."""
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    NAVY  = "1A3C6E"; BLUE  = "1E88E5"; WHITE = "FFFFFF"
+    LGRAY = "F0F4F8"; GOLD  = "FFF8E1"
+    C_RED = "C62828"; C_GRN = "1B5E20"
+
+    def _f(c): return PatternFill("solid", fgColor=c)
+    def _ft(bold=False, color="1A2B3C", size=10):
+        return Font(name="Calibri", bold=bold, color=color, size=size)
+    def _bd():
+        s = Side(style="thin", color="B0BEC5")
+        return Border(left=s, right=s, top=s, bottom=s)
+    def _al(h="center"):
+        return Alignment(horizontal=h, vertical="center")
+
+    carencia  = int(params.get("carencia_dias") or 4)
+    sindicos  = set(params.get("sindicos") or [])
+    isencao   = params.get("isencao_sindico", False)
+    all_units = set(params["unidades"].keys())
+    units_ext = {u for u, p in params["unidades"].items() if p["tem_taxa_extra"]}
+    units_ord = (all_units - sindicos) if isencao else all_units
+
+    df_n = df[df["Tipo Cobrança"] == "NORMAL"].copy()
+    df_e = df[df["Tipo Cobrança"] == "EXTRA"].copy()
+    df_a = df[df["Tipo Cobrança"] == "ACORDO"].copy()
+    for _d in (df_n, df_e, df_a):
+        _d["_mes"] = _d["Vencimento_dt"].dt.to_period("M")
+
+    # Step 1 — all periods in ascending order
+    all_periods = sorted(pd.unique(df["Vencimento_dt"].dropna().dt.to_period("M")))
+
+    # Base columns for pro-rata multa allocation
+    VALOR_COLS_BASE = [
+        "Taxa Ordinária", "Taxa de Água", "Medição e Leitura de Água",
+        "Taxa Extra -  Modernização Elevadores",
+        "Taxa Extra  - Reforma - Aquisição - Equipamentos Academia",
+        "Taxa Extra - Aquisição de Gerador",
+        "Taxa Extra - Melhorias no Condomínio",
+        "Taxa Extra Manut. Piscina",
+    ]
+
+    # Step 3 — payment reference list
+    pmts = [
+        {"nome": "Taxa Ordinária",            "col": "Taxa Ordinária",
+         "df_src": df_n, "n_esp": len(units_ord), "units_set": units_ord,
+         "p_ini": None, "p_fim": None, "add_outros": True},
+        {"nome": "Taxa de Água",              "col": "Taxa de Água",
+         "df_src": df_n, "n_esp": len(all_units), "units_set": all_units,
+         "p_ini": None, "p_fim": None, "add_outros": False},
+        {"nome": "Medição e Leitura de Água", "col": "Medição e Leitura de Água",
+         "df_src": df_n, "n_esp": len(all_units), "units_set": all_units,
+         "p_ini": None, "p_fim": None, "add_outros": False},
+    ]
+    for te in params.get("taxas_extras", []):
+        col = EXTRA_COL_MAP.get(te["nome"])
+        if not col or col not in df.columns:
+            continue
+        p_ini = pd.Period(year=te["inicio"][1], month=te["inicio"][0], freq="M") if te["inicio"] else None
+        p_fim = pd.Period(year=te["fim"][1],    month=te["fim"][0],    freq="M") if te["fim"] else None
+        pmts.append({
+            "nome": te["nome"], "col": col,
+            "df_src": df_e, "n_esp": len(units_ext), "units_set": units_ext,
+            "p_ini": p_ini, "p_fim": p_fim, "add_outros": False,
+        })
+
+    HDRS = [
+        "Competência", "Pagamentos do mês", "Valor esperado",
+        "Unid. no vencimento", "Unid. com atraso",
+        "Valor base pago", "Multa e juros pago", "Outros pagos",
+        "Total pago", "Diferença de fluxo", "Unid. inadimplentes",
+        "Lista de inadimplentes",
+    ]
+    NCOLS = len(HDRS)
+    COL_W = [14, 17, 15, 19, 16, 16, 17, 14, 13, 17, 18, 40]
+    for i, w in enumerate(COL_W, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    ws.row_dimensions[1].height = 28
+    ws.merge_cells(f"A1:{get_column_letter(NCOLS)}1")
+    c = ws["A1"]
+    c.value = "FLUXO DE PAGAMENTOS"
+    c.font = _ft(bold=True, color=WHITE, size=13); c.fill = _f(NAVY); c.alignment = _al()
+
+    _add_nota(ws, 2, NCOLS,
+        "O QUE ESTA ABA VERIFICA: reconciliação mensal do fluxo de caixa por tipo de cobrança "
+        "(Taxa Ordinária, Taxa de Água, Medição e Taxas Extras). Cada seção exibe uma linha por competência.\n"
+        "COLUNAS PRINCIPAIS: "
+        "Valor esperado = valor médio pago pelas unidades no prazo × total de unidades obrigadas "
+        "(fallback: valor dos parâmetros quando não há pagadores no prazo); "
+        f"Unid. no vencimento / com atraso = crédito dentro / fora da carência de {carencia} dias; "
+        "Multa e juros pago = rateado pro-rata pela participação de cada cobrança no total do boleto; "
+        "Outros pagos (somente Taxa Ordinária) = coluna 'Outros' da 004A + totais de ACORDO do período; "
+        "Diferença de fluxo = Total pago − Valor esperado (vermelho = déficit, verde = superávit).\n"
+        "ATENÇÃO: 'Unid. inadimplentes' e 'Lista de inadimplentes' refletem unidades sem registro "
+        "desse tipo de cobrança na 004A para o período — podem incluir lacunas no arquivo-fonte "
+        "que não representam inadimplência real. Para o relatório oficial de inadimplência, consulte a aba 'Inadimplência'."
+    )
+
+    r = 3
+
+    for pmt in pmts:
+        nome   = pmt["nome"]; col    = pmt["col"]
+        df_src = pmt["df_src"]; n_esp  = pmt["n_esp"]
+        units_s = pmt["units_set"]; p_ini  = pmt["p_ini"]; p_fim  = pmt["p_fim"]
+        add_o  = pmt["add_outros"]
+
+        if col not in df.columns:
+            continue
+
+        # Section header
+        ws.merge_cells(f"A{r}:{get_column_letter(NCOLS)}{r}")
+        c = ws[f"A{r}"]
+        c.value = nome; c.font = _ft(bold=True, color=WHITE, size=11)
+        c.fill = _f(BLUE); c.alignment = _al("left")
+        ws.row_dimensions[r].height = 20; r += 1
+
+        # Column headers
+        for ci, h in enumerate(HDRS, 1):
+            c = ws.cell(row=r, column=ci)
+            c.value = h; c.font = _ft(bold=True, color=WHITE, size=9)
+            c.fill = _f("2C5282"); c.border = _bd()
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.row_dimensions[r].height = 28; r += 1
+
+        # Relevant periods for this payment (respects inicio/fim for extras)
+        rel_periods = [
+            p for p in all_periods
+            if (p_ini is None or p >= p_ini) and (p_fim is None or p <= p_fim)
+        ]
+
+        tot = {"pag": 0, "v_esp": 0.0, "no_v": 0, "atr": 0,
+               "base": 0.0, "mj": 0.0, "out": 0.0, "tot": 0.0, "inad": 0}
+
+        for idx, period in enumerate(rel_periods):
+            comp_str = f"{period.month:02d}/{period.year}"
+            df_per = df_src[df_src["_mes"] == period].copy()
+
+            # Filter to relevant units
+            if nome == "Taxa Ordinária" and isencao:
+                df_per = df_per[~df_per["Unidade"].isin(sindicos)]
+            elif df_src is df_e:
+                df_per = df_per[df_per["Unidade"].isin(units_ext)]
+
+            df_col = df_per[df_per[col].fillna(0) > 0.05].copy()
+            n_pag  = len(df_col)
+
+            # Step 4 — on-time / late
+            no_v_df = df_col[df_col["dias_atraso"].fillna(999) <= carencia]
+            atr_df  = df_col[df_col["dias_atraso"].fillna(-1)  >  carencia]
+            n_no_v  = no_v_df["Unidade"].nunique()
+            n_atr   = atr_df["Unidade"].nunique()
+
+            # Step 4 — valor esperado: mean per on-time unit × n_expected
+            if len(no_v_df) > 0:
+                val_unit = float(no_v_df[col].mean())
+            else:
+                if nome == "Taxa Ordinária":
+                    val_unit = float(params.get("taxa_ord_padrao") or 0)
+                elif nome == "Medição e Leitura de Água":
+                    val_unit = float(params.get("taxa_medicao") or 0)
+                else:
+                    te_m = next((te for te in params.get("taxas_extras", []) if te["nome"] == nome), None)
+                    val_unit = float(te_m["valor"]) if te_m else 0.0
+            val_esp = val_unit * n_esp
+
+            # Valor base pago
+            val_base = float(df_col[col].fillna(0).sum())
+
+            # Multa e juros — pro-rata pela participação da coluna no total do boleto
+            mj = 0.0
+            for _, row_d in df_col.iterrows():
+                rm = float(row_d.get("Receita com Multas") or 0)
+                if rm <= 0:
+                    continue
+                row_base = sum(
+                    float(row_d.get(vc) or 0)
+                    for vc in VALOR_COLS_BASE if vc in df.columns
+                )
+                cv = float(row_d.get(col) or 0)
+                mj += rm * (cv / row_base) if row_base > 0 else rm
+
+            # Outros pagos (somente na linha de Taxa Ordinária; inclui ACORDO)
+            outros = 0.0
+            if add_o:
+                if "Outros" in df.columns:
+                    outros += float(df_per["Outros"].fillna(0).sum())
+                df_ac_p = df_a[df_a["_mes"] == period]
+                if len(df_ac_p):
+                    outros += float(df_ac_p["Total"].fillna(0).sum())
+
+            total_pago = val_base + mj + outros
+            diff       = total_pago - val_esp
+            paid_set   = set(df_col["Unidade"].unique())
+            inad_set   = sorted(units_s - paid_set, key=lambda x: x.zfill(10))
+            n_inad     = len(inad_set)
+            lista_inad = "; ".join(inad_set) if inad_set else ""
+
+            bg = LGRAY if idx % 2 == 0 else WHITE
+            row_vals = [
+                comp_str, n_pag, round(val_esp, 2),
+                n_no_v, n_atr,
+                round(val_base, 2), round(mj, 2), round(outros, 2),
+                round(total_pago, 2), round(diff, 2), n_inad, lista_inad,
+            ]
+            for ci, v in enumerate(row_vals, 1):
+                c = ws.cell(row=r, column=ci)
+                c.value = v; c.fill = _f(bg); c.border = _bd()
+                is_money = ci in (3, 6, 7, 8, 9, 10)
+                is_diff  = (ci == 10)
+                c.font = _ft(
+                    size=10, bold=is_diff,
+                    color=(C_RED if (is_diff and diff < 0) else
+                           C_GRN if (is_diff and diff >= 0) else "1A2B3C"),
+                )
+                c.alignment = _al("right" if is_money else
+                                  "left"  if ci == 12  else "center")
+                if is_money:
+                    c.number_format = '#,##0.00'
+            ws.row_dimensions[r].height = 16; r += 1
+
+            tot["pag"]  += n_pag;   tot["v_esp"] += val_esp; tot["no_v"] += n_no_v
+            tot["atr"]  += n_atr;   tot["base"]  += val_base; tot["mj"]   += mj
+            tot["out"]  += outros;  tot["tot"]   += total_pago; tot["inad"] += n_inad
+
+        # Total row per payment section
+        diff_t   = tot["tot"] - tot["v_esp"]
+        tot_vals = [
+            "Total", tot["pag"], round(tot["v_esp"], 2),
+            tot["no_v"], tot["atr"],
+            round(tot["base"], 2), round(tot["mj"], 2),
+            round(tot["out"], 2),  round(tot["tot"], 2),
+            round(diff_t, 2),      tot["inad"], "",
+        ]
+        for ci, v in enumerate(tot_vals, 1):
+            c = ws.cell(row=r, column=ci)
+            c.value = v; c.fill = _f(GOLD); c.border = _bd()
+            is_money = ci in (3, 6, 7, 8, 9, 10)
+            is_diff  = (ci == 10)
+            c.font = _ft(
+                bold=True, size=10,
+                color=(C_RED if (is_diff and diff_t < 0) else
+                       C_GRN if (is_diff and diff_t >= 0) else "1A2B3C"),
+            )
+            c.alignment = _al("right" if is_money else "center")
+            if is_money:
+                c.number_format = '#,##0.00'
+        ws.row_dimensions[r].height = 17; r += 2
+
+    ws.freeze_panes = "A3"
+
+
 def _gerar_excel(df, atrasados_sem_multa,
                  multa_inconsistente, multa_em_zero,
                  df_taxa, df_agua, df_medicao, df_extra, df_inadimplentes,
@@ -660,10 +1000,8 @@ def _gerar_excel(df, atrasados_sem_multa,
     def left():   return Alignment(horizontal="left",  vertical="center")
 
     wb = openpyxl.Workbook()
-    ws_inadin = wb.active
-    ws_inadin.title = "Inadimplência"
-    _aba_inadimplencia(ws_inadin, df, params, df_inadimplentes)
-    ws = wb.create_sheet("Resumo")
+    ws = wb.active
+    ws.title = "Resumo"
 
     def titulo(ws, texto, row, ncols=6):
         lc = get_column_letter(ncols)
@@ -683,35 +1021,48 @@ def _gerar_excel(df, atrasados_sem_multa,
         cv.fill=hfill(WHITE); cv.alignment=left(); cv.border=hbdr()
         ws.row_dimensions[row].height=17
 
-    def aba_df(wb, nome, df_aba, col_map, fill_hdr=BLUE):
+    def aba_df(wb, nome, df_aba, col_map, fill_hdr=BLUE, descricao=""):
+        ncols = len(col_map)
+        ws2 = wb.create_sheet(nome)
+        if descricao:
+            _add_nota(ws2, 1, ncols, descricao)
+        hdr_row  = 2 if descricao else 1
+        data_row = hdr_row + 1
         if df_aba is None or len(df_aba) == 0:
-            ws2=wb.create_sheet(nome)
-            ws2["A1"].value="Nenhuma ocorrência encontrada."
-            ws2["A1"].font=hfont(bold=True,color="2E7D32",size=11)
+            ws2.cell(row=data_row, column=1).value = "Nenhuma ocorrência encontrada."
+            ws2.cell(row=data_row, column=1).font  = hfont(bold=True, color="2E7D32", size=11)
             return
-        ws2=wb.create_sheet(nome)
-        colunas=list(col_map.keys())
-        for ci,col in enumerate(colunas,1):
-            c=ws2.cell(row=1,column=ci)
-            c.value=col_map[col]; c.font=hfont(bold=True,size=10)
-            c.fill=hfill(fill_hdr); c.alignment=center(); c.border=hbdr()
-            ws2.column_dimensions[get_column_letter(ci)].width=20
-        ws2.row_dimensions[1].height=20
-        for ri,(_, row) in enumerate(df_aba.iterrows(),2):
-            rf=hfill(LGRAY) if ri%2==0 else hfill(WHITE)
-            for ci,col in enumerate(colunas,1):
-                c=ws2.cell(row=ri,column=ci)
-                val=row.get(col,"") if col in row.index else ""
-                if isinstance(val,float) and np.isnan(val): val=""
-                c.value=val; c.fill=rf; c.border=hbdr()
-                c.font=hfont(color="1A2B3C",size=10); c.alignment=center()
-            ws2.row_dimensions[ri].height=16
+        colunas = list(col_map.keys())
+        for ci, col in enumerate(colunas, 1):
+            c = ws2.cell(row=hdr_row, column=ci)
+            c.value = col_map[col]; c.font = hfont(bold=True, size=10)
+            c.fill = hfill(fill_hdr); c.alignment = center(); c.border = hbdr()
+            ws2.column_dimensions[get_column_letter(ci)].width = 20
+        ws2.row_dimensions[hdr_row].height = 20
+        for ri, (_, row) in enumerate(df_aba.iterrows(), data_row):
+            rf = hfill(LGRAY) if ri % 2 == 0 else hfill(WHITE)
+            for ci, col in enumerate(colunas, 1):
+                c = ws2.cell(row=ri, column=ci)
+                val = row.get(col, "") if col in row.index else ""
+                if isinstance(val, float) and np.isnan(val): val = ""
+                c.value = val; c.fill = rf; c.border = hbdr()
+                c.font = hfont(color="1A2B3C", size=10); c.alignment = center()
+            ws2.row_dimensions[ri].height = 16
 
     # Resumo
     ws["A1"].value="OGS Serviços — Análise e Conciliação de Cobranças"
     ws["A1"].font=hfont(bold=True,size=14); ws["A1"].fill=hfill(NAVY)
     ws.merge_cells("A1:F1"); ws["A1"].alignment=center(); ws.row_dimensions[1].height=30
     for col in ["A","B","C","D","E","F"]: ws.column_dimensions[col].width=18
+    _add_nota(ws, 2, 6,
+        "O QUE ESTA ABA VERIFICA: painel consolidado da conciliação entre a planilha de parâmetros "
+        "e a base 004A (pagamentos realizados). Verificações realizadas: "
+        "(1) Validação dos parâmetros — campos obrigatórios, unidades sem parâmetro e vice-versa; "
+        "(2) Inadimplência — boletos NORMAL ausentes na 004A, excluindo síndico isento e unidades com ACORDO posterior; "
+        "(3) Inconsistências de valores — taxa ordinária, água, medição e taxas extras; "
+        "(4) Multa e atrasos — atrasados sem multa, multa fora da faixa esperada e multa sobre taxa zero. "
+        "Para detalhes de cada verificação, consulte as abas específicas desta planilha."
+    )
 
     r=3
     titulo(ws,"VISÃO GERAL",r); r+=1
@@ -758,37 +1109,98 @@ def _gerar_excel(df, atrasados_sem_multa,
     kv(ws,r,"Multa sobre taxa ordinária zero",resultado["multa_em_zero_qt"],
        "E65100" if resultado["multa_em_zero_qt"] else "2E7D32"); r+=1
 
+    # Fluxo de Pagamentos
+    ws_fluxo = wb.create_sheet("Fluxo de Pagamentos")
+    _aba_fluxo_pagamentos(ws_fluxo, df, params)
+
+    # Inadimplência
+    ws_inadin = wb.create_sheet("Inadimplência")
+    _aba_inadimplencia(ws_inadin, df, params, df_inadimplentes)
+
+    _car = resultado["carencia_param"]; _mul = resultado["pct_multa_param"]
+    _med = resultado["ref_medicao"]
+
     # Abas de detalhe
     aba_df(wb,"Taxa Ordinária — Divergências", df_taxa,
            {"Unidade":"Unidade","Vencimento":"Vencimento",
             "Esperado (R$)":"Esperado (R$)","Encontrado (R$)":"Encontrado (R$)",
-            "Diferença (R$)":"Diferença (R$)","Motivo":"Motivo"}, "C62828")
+            "Diferença (R$)":"Diferença (R$)","Motivo":"Motivo"}, "C62828",
+           descricao=(
+               "O QUE ESTA ABA VERIFICA: registros NORMAL em que o maior valor de taxa ordinária "
+               "cobrado no mês difere do valor esperado nos parâmetros em mais de R$ 0,05. "
+               "CRITÉRIO: para unidades com múltiplos boletos NORMAL no mesmo mês (ex.: boleto de "
+               "extras com taxa = 0), considera-se apenas o valor máximo do mês, evitando falsos positivos. "
+               "Síndico isento: quando configurado nos parâmetros, o valor esperado é R$ 0,00 e qualquer "
+               "cobrança de taxa ordinária é sinalizada como divergência."
+           ))
 
     aba_df(wb,"Taxa de Água — Problemas", df_agua,
-           {"Unidade":"Unidade","Vencimento":"Vencimento","Problema":"Problema","Valor":"Valor"}, "E65100")
+           {"Unidade":"Unidade","Vencimento":"Vencimento","Problema":"Problema","Valor":"Valor"}, "E65100",
+           descricao=(
+               "O QUE ESTA ABA VERIFICA: registros NORMAL com taxa de água ausente (NaN) ou igual a zero. "
+               "CRITÉRIO: a taxa de água é cobrada mensalmente para todas as unidades com base no consumo "
+               "individual; a ausência do valor no boleto NORMAL indica possível omissão operacional. "
+               "Esta verificação é complementar à aba 'Inadimplência': enquanto aquela identifica boletos "
+               "completamente ausentes, esta identifica boletos existentes com o campo água sem valor."
+           ))
 
     aba_df(wb,"Medição — Divergências", df_medicao,
            {"Unidade":"Unidade","Vencimento":"Vencimento",
-            "Problema":"Problema","Esperado":"Esperado (R$)","Encontrado":"Encontrado (R$)"}, "E65100")
+            "Problema":"Problema","Esperado":"Esperado (R$)","Encontrado":"Encontrado (R$)"}, "E65100",
+           descricao=(
+               f"O QUE ESTA ABA VERIFICA: registros NORMAL com valor de medição e leitura de água "
+               f"ausente, zero ou divergente do valor de referência definido nos parâmetros. "
+               f"CRITÉRIO: tolerância de R$ 0,05 em relação ao valor de referência ({_med}). "
+               f"Cobranças ausentes/zero e cobranças com diferença acima da tolerância são listadas "
+               f"com o motivo correspondente."
+           ))
 
     aba_df(wb,"Taxas Extras — Divergências", df_extra,
            {"Taxa":"Taxa","Unidade":"Unidade","Vencimento":"Vencimento",
             "Esperado (R$)":"Esperado (R$)","Encontrado (R$)":"Encontrado (R$)",
-            "Diferença (R$)":"Diferença (R$)"}, "E65100")
+            "Diferença (R$)":"Diferença (R$)"}, "E65100",
+           descricao=(
+               "O QUE ESTA ABA VERIFICA: registros EXTRA com valor cobrado divergente do esperado nos "
+               "parâmetros (tolerância: R$ 0,05). CRITÉRIO: são verificadas apenas as unidades marcadas "
+               "como 'com taxa extra' no cadastro de parâmetros. Dois tipos de ocorrência são sinalizados: "
+               "(1) cobrança no período vigente com valor diferente do parâmetro; "
+               "(2) cobrança fora do período vigente definido (início/fim) com valor acima de zero."
+           ))
 
     aba_df(wb,"Atrasados sem Multa", atrasados_sem_multa,
            {"Unidade":"Unidade","Vencimento_dt":"Vencimento","Credito_dt":"Crédito",
             "dias_atraso":"Dias Atraso","Taxa Ordinária":"Taxa Ordinária (R$)",
-            "Receita com Multas":"Multa (R$)"}, "C62828")
+            "Receita com Multas":"Multa (R$)"}, "C62828",
+           descricao=(
+               f"O QUE ESTA ABA VERIFICA: boletos NORMAL pagos com atraso real (crédito acima da "
+               f"carência de {_car} dias após o vencimento) sem cobrança de multa registrada "
+               f"(Receita com Multas = 0 ou ausente). "
+               f"CRITÉRIO: a carência contempla a compensação bancária. A multa esperada é de {_mul} "
+               f"sobre a taxa ordinária. A ausência de multa em pagamentos atrasados pode indicar "
+               f"isenção não documentada ou falha operacional no sistema de cobrança."
+           ))
 
     aba_df(wb,"Multa Inconsistente", multa_inconsistente,
            {"Unidade":"Unidade","Vencimento_dt":"Vencimento","dias_atraso":"Dias Atraso",
             "Taxa Ordinária":"Taxa Ord. (R$)","Receita com Multas":"Multa (R$)",
-            "pct_multa_calc":"% Multa Calculado"}, "E65100")
+            "pct_multa_calc":"% Multa Calculado"}, "E65100",
+           descricao=(
+               f"O QUE ESTA ABA VERIFICA: boletos NORMAL com multa cobrada fora da faixa aceitável "
+               f"em relação ao percentual configurado nos parâmetros ({_mul}). "
+               f"CRITÉRIO: faixa aceitável de 75% a 150% do percentual esperado. Apenas boletos com "
+               f"taxa ordinária > 0 são analisados para evitar distorções por divisão de valores zero. "
+               f"O percentual calculado é: Receita com Multas ÷ Taxa Ordinária × 100."
+           ))
 
     aba_df(wb,"Multa sobre Taxa Zero", multa_em_zero,
            {"Unidade":"Unidade","Vencimento_dt":"Vencimento",
-            "Taxa Ordinária":"Taxa Ord. (R$)","Receita com Multas":"Multa (R$)"}, "E65100")
+            "Taxa Ordinária":"Taxa Ord. (R$)","Receita com Multas":"Multa (R$)"}, "E65100",
+           descricao=(
+               "O QUE ESTA ABA VERIFICA: boletos NORMAL com Receita com Multas > 0 e taxa ordinária "
+               "igual a zero. CRITÉRIO: a multa deve incidir sobre o valor da taxa base; cobrar multa "
+               "sobre taxa zero indica possível erro de lançamento no sistema de gestão — o valor de "
+               "multa foi registrado em um boleto que não possui taxa ordinária associada."
+           ))
 
     # Dados completos
     aba_df(wb,"Dados Completos", df,
@@ -796,7 +1208,15 @@ def _gerar_excel(df, atrasados_sem_multa,
             "dias_atraso":"Dias Atraso","Tipo Cobrança":"Tipo",
             "Taxa Ordinária":"Taxa Ord. (R$)","Taxa de Água":"Água (R$)",
             "Medição e Leitura de Água":"Medição (R$)",
-            "Receita com Multas":"Multa (R$)","Total":"Total (R$)"}, NAVY)
+            "Receita com Multas":"Multa (R$)","Total":"Total (R$)"}, NAVY,
+           descricao=(
+               "O QUE ESTA ABA CONTÉM: exportação integral da base 004A após normalização. "
+               "Transformações aplicadas: datas de vencimento e crédito convertidas para datetime "
+               "(formato DD/MM/AAAA); valores monetários convertidos de texto para numérico "
+               "(suporte a formato brasileiro com ponto e vírgula); dias de atraso calculados como "
+               "Crédito − Vencimento (negativo = pago antecipado; positivo = pago com atraso). "
+               "Esta aba serve como fonte auditável para todas as demais análises desta planilha."
+           ))
 
     out = os.path.join(output_dir, f"{session_id}_analise.xlsx")
     wb.save(out)

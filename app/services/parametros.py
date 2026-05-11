@@ -65,8 +65,12 @@ def ler_parametros(path: str) -> dict:
         return ws.cell(row=row, column=col).value
 
     # Síndico(s): campo B5 (coluna 2)
+    # Normaliza para o mesmo formato da 004A: str(int(x)) strip leading zeros
+    def _norm_u(s):
+        try: return str(int(float(s)))
+        except (ValueError, TypeError): return s
     sindicos_raw = str(v(5, 2) or "")
-    sindicos = [s.strip() for s in sindicos_raw.split(";") if s.strip()]
+    sindicos = [_norm_u(s.strip()) for s in sindicos_raw.split(";") if s.strip()]
 
     params = {
         "cliente":         v(2, 2),
