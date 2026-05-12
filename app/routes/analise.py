@@ -62,6 +62,11 @@ def analisar():
         path_pdf = os.path.join(upload_dir, f"{session_id}_relatorio.pdf")
         arquivo_pdf.save(path_pdf)
 
+    # Apaga o output da análise anterior desta sessão, se o usuário não fez download
+    old_id = session.get("session_id")
+    if old_id:
+        _apagar(os.path.join(output_dir, f"{old_id}_analise.xlsx"))
+
     resultado = processar_conciliacao(
         path_params, path_dados, session_id, output_dir, path_pdf=path_pdf
     )

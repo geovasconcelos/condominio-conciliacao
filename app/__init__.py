@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from flask import Flask
 from dotenv import load_dotenv
@@ -10,6 +11,24 @@ _DEPLOY_TIME = datetime.now().strftime("%d/%m/%Y %H:%M")
 _CURRENT_YEAR = datetime.now().year
 _COMMIT_SHA  = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")
 _VERSION     = _COMMIT_SHA[:7] if _COMMIT_SHA else "local"
+
+# Arquivos de sessão têm prefixo UUID4 (ex: "3f2a...-dados.xlsx")
+_RE_SESSAO = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_'
+)
+
+
+def _limpar_pasta(pasta: str) -> None:
+    """Remove arquivos de sessão (prefixo UUID4) da pasta informada."""
+    try:
+        for nome in os.listdir(pasta):
+            if _RE_SESSAO.match(nome):
+                try:
+                    os.remove(os.path.join(pasta, nome))
+                except OSError:
+                    pass
+    except OSError:
+        pass
 
 
 def create_app():
@@ -26,6 +45,10 @@ def create_app():
     os.makedirs(output_dir, exist_ok=True)
     app.config["UPLOAD_FOLDER"] = upload_dir
     app.config["OUTPUT_FOLDER"] = output_dir
+
+    # Limpa arquivos de sessões anteriores ao subir o servidor
+    _limpar_pasta(upload_dir)
+    _limpar_pasta(output_dir)
 
     from app.routes.main import main_bp
     from app.routes.analise import analise_bp
