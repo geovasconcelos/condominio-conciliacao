@@ -78,7 +78,8 @@ def _carregar_dados(path: str) -> pd.DataFrame:
 # ── Análise principal ───────────────────────────────────────────────────────────
 
 def processar_conciliacao(path_params: str, path_dados: str,
-                          session_id: str, output_dir: str) -> dict:
+                          session_id: str, output_dir: str,
+                          path_pdf: str | None = None) -> dict:
     params = ler_parametros(path_params)
     df     = _carregar_dados(path_dados)
 
@@ -212,6 +213,23 @@ def processar_conciliacao(path_params: str, path_dados: str,
                     "Competência": comp_str,
                     "tipo_inadin": "EXTRA",
                 })
+
+    # ── 3c. Comparação com relatório PDF do cliente ─────────────
+    pdf_erros       = []
+    pdf_divergencias = []
+    pdf_comparado   = False
+    pdf_unidades    = []
+
+    if path_pdf:
+        from app.services.pdf_inadimplencia import (
+            parsear_pdf_inadimplencia, comparar_com_sistema
+        )
+        pdf_registros, pdf_erros = parsear_pdf_inadimplencia(path_pdf)
+        if pdf_registros:
+            pdf_comparado    = True
+            pdf_unidades     = sorted({r["unidade"] for r in pdf_registros},
+                                      key=lambda x: x.zfill(10))
+            pdf_divergencias = comparar_com_sistema(pdf_registros, boletos_ausentes)
 
     # ── 4. Taxa de Água ────────────────────────────────────────
     problemas_agua = []
@@ -392,6 +410,11 @@ def processar_conciliacao(path_params: str, path_dados: str,
         "isencao_sindico":    params["isencao_sindico"],
         "ref_medicao":        _fmt_brl(params["taxa_medicao"]),
         "qt_taxas_extras_param": len(params["taxas_extras"]),
+        # Comparação PDF
+        "pdf_comparado":         pdf_comparado,
+        "pdf_erros":             pdf_erros,
+        "pdf_unidades":          pdf_unidades,
+        "qt_diverg_pdf":         len(pdf_divergencias),
         # Validação de parâmetros
         "campos_faltantes":      campos_faltantes,
         "sem_parametro":         sem_parametro,
@@ -435,6 +458,7 @@ def processar_conciliacao(path_params: str, path_dados: str,
                  pd.DataFrame(problemas_medicao),
                  pd.DataFrame(inconsistencias_extra),
                  pd.DataFrame(boletos_ausentes),
+                 pd.DataFrame(pdf_divergencias),
                  sem_parametro, sem_dados, campos_faltantes,
                  resultado, params, output_dir, session_id)
 
@@ -982,9 +1006,121 @@ def _aba_fluxo_pagamentos(ws, df, params):
     ws.freeze_panes = "A3"
 
 
+def _aba_conferencia_pdf(ws, df_diverg, resultado):
+    """Aba de conferência entre o sistema e o relatório PDF do cliente."""
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    NAVY  = "1A3C6E"; WHITE = "FFFFFF"; LGRAY = "F0F4F8"
+    GOLD  = "FFF8E1"; GREEN = "1B5E20"; C_RED = "B71C1C"
+    WARN  = "E65100"
+
+    def _f(c): return PatternFill("solid", fgColor=c)
+    def _ft(bold=False, color="1A2B3C", size=10):
+        return Font(name="Calibri", bold=bold, color=color, size=size)
+    def _bd():
+        s = Side(style="thin", color="B0BEC5")
+        return Border(left=s, right=s, top=s, bottom=s)
+    def _al(h="left"):
+        return Alignment(horizontal=h, vertical="center", wrap_text=False)
+
+    NCOLS = 4
+    COL_W = [38, 12, 14, 70]
+    COL_H = ["Tipo da Divergência", "Unidade", "Competência", "Detalhe"]
+    for i, w in enumerate(COL_W, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # Título
+    ws.merge_cells(f"A1:{get_column_letter(NCOLS)}1")
+    c = ws["A1"]
+    c.value = "CONFERÊNCIA COM RELATÓRIO DO CLIENTE"
+    c.font  = _ft(bold=True, color=WHITE, size=14)
+    c.fill  = _f(NAVY)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 30
+
+    _add_nota(ws, 2, NCOLS,
+        "O QUE ESTA ABA VERIFICA: confronto entre o relatório de inadimplência fornecido pelo cliente "
+        "(gerado pelo sistema Controlar — 'Inadimplência com composição detalhado') e a inadimplência "
+        "detectada por este sistema a partir da base 004A.\n"
+        "TIPOS DE DIVERGÊNCIA: (1) 'No PDF, não no sistema' — unidade ou mês consta no relatório do cliente "
+        "mas o sistema não detectou inadimplência; (2) 'No sistema, não no PDF' — o sistema detectou "
+        "inadimplência mas a unidade/mês não aparece no relatório do cliente.\n"
+        "ATENÇÃO: divergências não necessariamente indicam erro — podem refletir datas de corte diferentes, "
+        "acordos registrados após a geração do PDF, ou meses com somente taxas extras em divergência."
+    )
+
+    # Linha de metadados
+    pdf_units = resultado.get("pdf_unidades", [])
+    n_diverg  = resultado.get("qt_diverg_pdf", 0)
+    ws.merge_cells(f"A3:{get_column_letter(NCOLS)}3")
+    c = ws["A3"]
+    c.value = (f"Unidades no relatório do cliente: {', '.join(pdf_units) or 'nenhuma'}  |  "
+               f"Divergências encontradas: {n_diverg}")
+    c.font  = _ft(size=9, color="455A64")
+    c.fill  = _f("FAFAFA")
+    c.alignment = _al("left")
+    ws.row_dimensions[3].height = 14
+
+    if df_diverg is None or len(df_diverg) == 0:
+        ws.merge_cells(f"A4:{get_column_letter(NCOLS)}4")
+        c = ws["A4"]
+        c.value = "Nenhuma divergência encontrada — sistema e relatório do cliente estão em concordância."
+        c.font  = _ft(bold=True, color=GREEN, size=11)
+        c.fill  = _f("F1F8E9")
+        c.alignment = _al("center")
+        ws.row_dimensions[4].height = 22
+        return
+
+    # Cabeçalhos
+    r = 4
+    for ci, h in enumerate(COL_H, 1):
+        c = ws.cell(row=r, column=ci)
+        c.value = h
+        c.font  = _ft(bold=True, color=WHITE, size=10)
+        c.fill  = _f(NAVY)
+        c.border = _bd()
+        c.alignment = _al("center")
+    ws.row_dimensions[r].height = 18
+    r += 1
+
+    COR_TIPO = {
+        "No PDF, não no sistema":  C_RED,
+        "No sistema, não no PDF":  WARN,
+        "Mês no PDF, não no sistema": C_RED,
+        "Mês no sistema, não no PDF": WARN,
+    }
+
+    for idx, (_, row) in enumerate(df_diverg.iterrows()):
+        bg   = _f(LGRAY if idx % 2 == 0 else WHITE)
+        tipo = str(row.get("Tipo", ""))
+        cor  = COR_TIPO.get(tipo, "1A2B3C")
+        vals = [
+            tipo,
+            str(row.get("Unidade", "")),
+            str(row.get("Competência", "")),
+            str(row.get("Detalhe", "")),
+        ]
+        for ci, v in enumerate(vals, 1):
+            c = ws.cell(row=r, column=ci)
+            c.value  = v
+            c.fill   = bg
+            c.border = _bd()
+            c.font   = _ft(size=10, bold=(ci == 1), color=(cor if ci == 1 else "1A2B3C"))
+            c.alignment = Alignment(
+                horizontal="left", vertical="center",
+                wrap_text=(ci == NCOLS)
+            )
+        ws.row_dimensions[r].height = 16 if len(vals[3]) < 80 else 28
+        r += 1
+
+    ws.freeze_panes = "A4"
+
+
 def _gerar_excel(df, atrasados_sem_multa,
                  multa_inconsistente, multa_em_zero,
                  df_taxa, df_agua, df_medicao, df_extra, df_inadimplentes,
+                 df_diverg_pdf,
                  sem_param, sem_dados, campos_faltantes,
                  resultado, params, output_dir, session_id):
     import openpyxl
@@ -1114,6 +1250,11 @@ def _gerar_excel(df, atrasados_sem_multa,
        "E65100" if resultado["multa_inconsistente_qt"] else "2E7D32"); r+=1
     kv(ws,r,"Multa sobre taxa ordinária zero",resultado["multa_em_zero_qt"],
        "E65100" if resultado["multa_em_zero_qt"] else "2E7D32"); r+=1
+
+    # Conferência PDF (só cria se PDF foi comparado)
+    if resultado.get("pdf_comparado"):
+        ws_conf = wb.create_sheet("Conferência — PDF")
+        _aba_conferencia_pdf(ws_conf, df_diverg_pdf, resultado)
 
     # Fluxo de Pagamentos
     ws_fluxo = wb.create_sheet("Fluxo de Pagamentos")

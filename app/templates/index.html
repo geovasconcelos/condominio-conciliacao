@@ -54,6 +54,19 @@
                     </div>
                 </div>
 
+                <div class="upload-field upload-field-opcional">
+                    <label>
+                        <svg class="icon" viewBox="0 0 24 24"><path d="M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8.5 7.5c0 .83-.67 1.5-1.5 1.5H9v2H7.5V9H10c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V9H15c.83 0 1.5.67 1.5 1.5v3zm4-3H19v1h1.5V11H19v2h-1.5V9h3v1.5zM9 10h1v1H9v-1zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm10 7h-1v-1h1v1z"/></svg>
+                        Relatório de Inadimplência <span class="badge-opcional">opcional</span>
+                    </label>
+                    <div class="dropzone">
+                        <input type="file" name="relatorio_pdf" id="relatorio_pdf" accept=".pdf">
+                        <p class="dz-text">Clique ou arraste o PDF do cliente</p>
+                        <p class="dz-filename" id="fn-relatorio_pdf"></p>
+                    </div>
+                    <p class="upload-hint">Formato Controlar: "Inadimplência com composição (detalhado)". Quando enviado, gera a aba <strong>Conferência — PDF</strong> no Excel.</p>
+                </div>
+
                 {% with messages = get_flashed_messages() %}
                 {% if messages %}
                 <div class="alertas">
@@ -76,8 +89,9 @@
         {% endif %}
 
         <div class="sidebar-info">
-            Formatos aceitos: <strong style="color:#29B6F6">.xlsx</strong> e <strong style="color:#29B6F6">.xls</strong><br>
-            Tamanho máximo: 10 MB.
+            Planilhas: <strong style="color:#29B6F6">.xlsx</strong> / <strong style="color:#29B6F6">.xls</strong><br>
+            PDF: <strong style="color:#29B6F6">.pdf</strong><br>
+            Tamanho máximo: 10 MB por arquivo.
         </div>
     </aside>
 
@@ -232,6 +246,48 @@
                 {% endif %}
             </div>
         </div>
+
+        <!-- Seção: Conferência com relatório PDF -->
+        {% if resultado.pdf_erros %}
+        <div>
+            <p class="section-heading section-heading-erro">Relatório do Cliente — Erros de Leitura</p>
+            <div class="pdf-erros-box">
+                <p class="pdf-erro-intro">O sistema não conseguiu processar o PDF enviado. Verifique os erros abaixo e confirme que o arquivo é um relatório "Inadimplência com composição (detalhado)" gerado pelo Controlar.</p>
+                <table class="pdf-erros-table">
+                    <thead><tr><th>Página</th><th>Linha</th><th>Mensagem</th></tr></thead>
+                    <tbody>
+                    {% for erro in resultado.pdf_erros %}
+                    <tr>
+                        <td>{% if erro.pagina > 0 %}{{ erro.pagina }}{% else %}—{% endif %}</td>
+                        <td>{% if erro.linha > 0 %}{{ erro.linha }}{% else %}—{% endif %}</td>
+                        <td>{{ erro.mensagem }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% elif resultado.pdf_comparado %}
+        <div>
+            <p class="section-heading">Conferência com Relatório do Cliente</p>
+            <div class="checks-grid">
+                <div class="check-item {% if resultado.qt_diverg_pdf > 0 %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.qt_diverg_pdf > 0 %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Comparação com PDF do cliente</strong>
+                        <span>
+                            Unidades no relatório: <strong>{{ resultado.pdf_unidades | join(", ") }}</strong><br>
+                            {% if resultado.qt_diverg_pdf > 0 %}
+                            {{ resultado.qt_diverg_pdf }} divergência(s) encontrada(s) — detalhes na aba <strong>"Conferência — PDF"</strong> do Excel.
+                            {% else %}
+                            Sistema e relatório do cliente estão em perfeita concordância.
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
 
         <!-- Seção 3: Análise de atrasos -->
         <div>

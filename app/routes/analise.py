@@ -8,11 +8,12 @@ from app.services.conciliacao import processar_conciliacao
 
 analise_bp = Blueprint("analise", __name__)
 
-EXTENSOES = {"xlsx", "xls"}
+EXTENSOES     = {"xlsx", "xls"}
+EXTENSOES_PDF = {"pdf"}
 
 
-def _valida(nome):
-    return "." in nome and nome.rsplit(".", 1)[1].lower() in EXTENSOES
+def _valida(nome, exts=EXTENSOES):
+    return "." in nome and nome.rsplit(".", 1)[1].lower() in exts
 
 
 def _apagar(path):
@@ -27,6 +28,7 @@ def _apagar(path):
 def analisar():
     arquivo_params = request.files.get("parametros")
     arquivo_dados  = request.files.get("dados")
+    arquivo_pdf    = request.files.get("relatorio_pdf")
 
     if not arquivo_params or not arquivo_params.filename:
         flash("Envie a planilha de parâmetros.")
@@ -37,7 +39,12 @@ def analisar():
         return redirect(url_for("main.index"))
 
     if not (_valida(arquivo_params.filename) and _valida(arquivo_dados.filename)):
-        flash("Apenas arquivos .xlsx ou .xls são aceitos.")
+        flash("Apenas arquivos .xlsx ou .xls são aceitos para parâmetros e dados.")
+        return redirect(url_for("main.index"))
+
+    tem_pdf = arquivo_pdf and arquivo_pdf.filename
+    if tem_pdf and not _valida(arquivo_pdf.filename, EXTENSOES_PDF):
+        flash("O relatório do cliente deve ser um arquivo .pdf.")
         return redirect(url_for("main.index"))
 
     session_id = str(uuid.uuid4())
@@ -46,13 +53,23 @@ def analisar():
 
     path_params = os.path.join(upload_dir, f"{session_id}_parametros.xlsx")
     path_dados  = os.path.join(upload_dir, f"{session_id}_dados.xlsx")
+    path_pdf    = None
+
     arquivo_params.save(path_params)
     arquivo_dados.save(path_dados)
 
-    resultado = processar_conciliacao(path_params, path_dados, session_id, output_dir)
+    if tem_pdf:
+        path_pdf = os.path.join(upload_dir, f"{session_id}_relatorio.pdf")
+        arquivo_pdf.save(path_pdf)
+
+    resultado = processar_conciliacao(
+        path_params, path_dados, session_id, output_dir, path_pdf=path_pdf
+    )
 
     _apagar(path_params)
     _apagar(path_dados)
+    if path_pdf:
+        _apagar(path_pdf)
 
     session["session_id"] = session_id
 

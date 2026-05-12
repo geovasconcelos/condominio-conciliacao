@@ -511,6 +511,87 @@ footer {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── Upload campo opcional ────────────────────────────────── */
+.upload-field-opcional .dropzone {
+    border-style: dashed;
+    border-color: rgba(41,182,246,.28);
+    opacity: .85;
+}
+.upload-field-opcional .dropzone:hover { opacity: 1; }
+
+.badge-opcional {
+    font-size: .66rem;
+    background: rgba(41,182,246,.22);
+    color: var(--cyan);
+    border-radius: 4px;
+    padding: .1rem .4rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    margin-left: .2rem;
+    vertical-align: middle;
+}
+
+.upload-hint {
+    font-size: .72rem;
+    color: rgba(255,255,255,.42);
+    margin-top: .35rem;
+    line-height: 1.45;
+}
+
+/* ── Erros de leitura do PDF ──────────────────────────────── */
+.section-heading-erro {
+    color: var(--error);
+}
+
+.pdf-erros-box {
+    background: #FFF3F3;
+    border: 1.5px solid #FFCDD2;
+    border-left: 4px solid var(--error);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+}
+
+.pdf-erro-intro {
+    font-size: .85rem;
+    color: #B71C1C;
+    line-height: 1.5;
+}
+
+.pdf-erros-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .82rem;
+}
+
+.pdf-erros-table th {
+    background: #FFEBEE;
+    color: #B71C1C;
+    font-weight: 700;
+    padding: .4rem .75rem;
+    text-align: left;
+    border-bottom: 2px solid #FFCDD2;
+}
+
+.pdf-erros-table td {
+    padding: .45rem .75rem;
+    border-bottom: 1px solid #FFEBEE;
+    color: #3E1111;
+    vertical-align: top;
+}
+
+.pdf-erros-table tr:last-child td { border-bottom: none; }
+.pdf-erros-table td:first-child,
+.pdf-erros-table td:nth-child(2) {
+    white-space: nowrap;
+    color: #B71C1C;
+    font-weight: 700;
+    width: 60px;
+}
+
 /* ── Responsive ───────────────────────────────────────────── */
 @media (max-width: 640px) {
     .layout { flex-direction: column; }

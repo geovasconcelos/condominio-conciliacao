@@ -8,8 +8,9 @@ document.addEventListener("DOMContentLoaded", () => {
             label.textContent = input.files[0] ? input.files[0].name : "";
         });
     }
-    bindFilename("parametros", "fn-parametros");
-    bindFilename("dados",      "fn-dados");
+    bindFilename("parametros",    "fn-parametros");
+    bindFilename("dados",         "fn-dados");
+    bindFilename("relatorio_pdf", "fn-relatorio_pdf");
 
     // Spinner ao submeter
     const form    = document.getElementById("form-upload");
