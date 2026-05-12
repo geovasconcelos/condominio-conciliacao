@@ -343,8 +343,9 @@ def processar_conciliacao(path_params: str, path_dados: str,
     ]
 
     # ── 8. Estatísticas gerais ────────────────────────────────
-    total_registros = len(df)
-    total_unidades  = df["Unidade"].nunique()
+    total_registros      = len(df)
+    total_unidades       = df["Unidade"].nunique()
+    total_unidades_param = len(params["unidades"])
     periodo_inicio  = df["Vencimento_dt"].min()
     periodo_fim     = df["Vencimento_dt"].max()
     total_emissao   = df["Total"].sum()
@@ -392,9 +393,10 @@ def processar_conciliacao(path_params: str, path_dados: str,
         "ref_medicao":        _fmt_brl(params["taxa_medicao"]),
         "qt_taxas_extras_param": len(params["taxas_extras"]),
         # Validação de parâmetros
-        "campos_faltantes":   campos_faltantes,
-        "sem_parametro":      sem_parametro,
-        "sem_dados":          sem_dados,
+        "campos_faltantes":      campos_faltantes,
+        "sem_parametro":         sem_parametro,
+        "sem_dados":             sem_dados,
+        "total_unidades_param":  total_unidades_param,
         # Taxa ordinária
         "qt_inconsist_taxa":  len(inconsistencias_taxa),
         # Inadimplência (boletos ausentes)
@@ -1074,6 +1076,10 @@ def _gerar_excel(df, atrasados_sem_multa,
     kv(ws,r,"Campos obrigatórios faltantes",
        ", ".join(campos_faltantes) if campos_faltantes else "Nenhum",
        "C62828" if campos_faltantes else "2E7D32"); r+=1
+    qt_p = resultado["total_unidades_param"]; qt_d = resultado["total_unidades"]
+    kv(ws,r,"Unidades no parâmetro / na 004A",
+       f"{qt_p} / {qt_d}",
+       "E65100" if qt_p != qt_d else "2E7D32"); r+=1
     kv(ws,r,"Unidades nos dados sem parâmetro",
        ", ".join(sem_param) if sem_param else "Nenhuma",
        "E65100" if sem_param else "2E7D32"); r+=1

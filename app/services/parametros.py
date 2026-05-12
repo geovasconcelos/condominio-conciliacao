@@ -114,8 +114,8 @@ def ler_parametros(path: str) -> dict:
             "obs":    v(row, 5),
         })
 
-    # Matriz por unidade (linhas 34-83, cols A-D): Unidade | Taxa Ord. | Taxa Extra S/N | Obs
-    for row in range(34, 84):
+    # Matriz por unidade (linha 34 em diante, cols A-D): Unidade | Taxa Ord. | Taxa Extra S/N | Obs
+    for row in range(34, ws.max_row + 1):
         unidade_raw = v(row, 1)
         if not unidade_raw:
             continue
