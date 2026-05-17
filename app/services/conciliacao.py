@@ -37,23 +37,15 @@ def _fmt_brl(v):
     return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
 
 
-NUMERIC_COLS = [
-    "Tarifa Liquidação Boleto","Taxa de Água","Medição e Leitura de Água",
-    "Taxa Ordinária","Taxa Extra -  Modernização Elevadores",
-    "Taxa Extra Manut. Piscina","Taxa Extra - Melhorias no Condomínio",
-    "Taxa Extra - Aquisição de Gerador",
-    "Taxa Extra  - Reforma - Aquisição - Equipamentos Academia",
-    "Receita com Multas","Outros","Total",
+NUMERIC_COLS_BASE = [
+    "Tarifa Liquidação Boleto", "Taxa de Água", "Medição e Leitura de Água",
+    "Taxa Ordinária", "Receita com Multas", "Outros", "Total",
 ]
 
-# Mapeamento nome do parâmetro → coluna no 004A
-EXTRA_COL_MAP = {
-    "Taxa Extra -  Modernização Elevadores":              "Taxa Extra -  Modernização Elevadores",
-    "Taxa Extra  - Reforma - Aquisição - Equipamentos Academia": "Taxa Extra  - Reforma - Aquisição - Equipamentos Academia",
-    "Taxa Extra - Aquisição de Gerador":                  "Taxa Extra - Aquisição de Gerador",
-    "Taxa Extra - Melhorias no Condomínio":               "Taxa Extra - Melhorias no Condomínio",
-    "Taxa Extra Manut. Piscina":                          "Taxa Extra Manut. Piscina",
-}
+
+def _norm_nome(s: str) -> str:
+    """Normaliza nome para comparação: minúsculo e espaços colapsados."""
+    return " ".join(str(s).strip().split()).lower()
 
 
 # ── Carregamento dos dados ──────────────────────────────────────────────────────
@@ -62,8 +54,11 @@ def _carregar_dados(path: str) -> pd.DataFrame:
     df = pd.read_excel(path, header=3)
     df = df[df["Tipo Lançamento"].notna()].copy()
 
-    for col in NUMERIC_COLS:
+    for col in NUMERIC_COLS_BASE:
         if col in df.columns:
+            df[col] = df[col].apply(_br_to_float)
+    for col in df.columns:
+        if str(col).startswith("Taxa Extra"):
             df[col] = df[col].apply(_br_to_float)
 
     df["Vencimento_dt"] = df["Vencimento"].apply(_parse_date)
@@ -272,27 +267,40 @@ def processar_conciliacao(path_params: str, path_dados: str,
 
     # ── 6. Taxas Extras ────────────────────────────────────────
     inconsistencias_extra = []
-    for taxa_param in params["taxas_extras"]:
-        nome    = taxa_param["nome"]
-        col     = EXTRA_COL_MAP.get(nome)
+    taxas_sem_parametro   = []
+
+    # Detecta todas as colunas "Taxa Extra*" presentes na 004A com dados
+    cols_extra_004a = [
+        col for col in df.columns
+        if str(col).startswith("Taxa Extra") and df[col].notna().any()
+    ]
+
+    df_e_unidades = df_extra[df_extra["Unidade"].isin(
+        [u for u, p in params["unidades"].items() if p["tem_taxa_extra"]]
+    )].copy()
+
+    for col in cols_extra_004a:
+        # Busca parâmetro correspondente por nome normalizado
+        taxa_param = next(
+            (te for te in params["taxas_extras"]
+             if _norm_nome(te["nome"]) == _norm_nome(col)),
+            None
+        )
+        if taxa_param is None:
+            taxas_sem_parametro.append(col)  # Coluna na 004A sem entrada nos parâmetros
+            continue
+
         valor_p = taxa_param["valor"]
         inicio  = taxa_param["inicio"]
         fim     = taxa_param["fim"]
 
-        if not col or col not in df.columns:
-            continue
-
-        df_e = df_extra[df_extra["Unidade"].isin(
-            [u for u, p in params["unidades"].items() if p["tem_taxa_extra"]]
-        )].copy()
-
-        for unidade, grp in df_e.groupby("Unidade"):
+        for unidade, grp in df_e_unidades.groupby("Unidade"):
             for _, row in grp.iterrows():
                 venc = row["Vencimento_dt"]
                 if pd.isna(venc):
                     continue
 
-                # Verifica se está no período esperado (comparação por data, não tupla)
+                # Verifica se está no período esperado
                 no_periodo = True
                 if inicio and fim:
                     inicio_date = pd.Timestamp(year=inicio[1], month=inicio[0], day=1)
@@ -305,22 +313,22 @@ def processar_conciliacao(path_params: str, path_dados: str,
 
                 if no_periodo and abs(valor_real - valor_p) > 0.05:
                     inconsistencias_extra.append({
-                        "Taxa":          nome,
-                        "Unidade":       unidade,
-                        "Vencimento":    venc.strftime("%d/%m/%Y"),
-                        "Esperado (R$)": valor_p,
+                        "Taxa":            col,
+                        "Unidade":         unidade,
+                        "Vencimento":      venc.strftime("%d/%m/%Y"),
+                        "Esperado (R$)":   valor_p,
                         "Encontrado (R$)": valor_real,
-                        "Diferença (R$)": valor_real - valor_p,
+                        "Diferença (R$)":  valor_real - valor_p,
                     })
                 elif not no_periodo and valor_real > 0:
                     inconsistencias_extra.append({
-                        "Taxa":          nome,
-                        "Unidade":       unidade,
-                        "Vencimento":    venc.strftime("%d/%m/%Y"),
-                        "Esperado (R$)": 0.0,
+                        "Taxa":            col,
+                        "Unidade":         unidade,
+                        "Vencimento":      venc.strftime("%d/%m/%Y"),
+                        "Esperado (R$)":   0.0,
                         "Encontrado (R$)": valor_real,
-                        "Diferença (R$)": valor_real,
-                        "Motivo":        "Cobrança fora do período vigente",
+                        "Diferença (R$)":  valor_real,
+                        "Motivo":          "Cobrança fora do período vigente",
                     })
 
     # ── 7. Multa ────────────────────────────────────────────────
@@ -429,7 +437,8 @@ def processar_conciliacao(path_params: str, path_dados: str,
         "qt_prob_agua":       len(problemas_agua),
         "qt_prob_medicao":    len(problemas_medicao),
         # Taxa extra
-        "qt_inconsist_extra": len(inconsistencias_extra),
+        "qt_inconsist_extra":    len(inconsistencias_extra),
+        "taxas_sem_parametro":   taxas_sem_parametro,
         # Atrasos
         "no_prazo":           no_prazo,
         "compensacao":        compensacao_banc,
@@ -786,15 +795,11 @@ def _aba_fluxo_pagamentos(ws, df, params):
     # Step 1 — all periods in ascending order
     all_periods = sorted(pd.unique(df["Vencimento_dt"].dropna().dt.to_period("M")))
 
-    # Base columns for pro-rata multa allocation
+    # Base columns for pro-rata multa allocation — extra fees detected dynamically
+    _cols_extra_fluxo = [c for c in df.columns if str(c).startswith("Taxa Extra")]
     VALOR_COLS_BASE = [
         "Taxa Ordinária", "Taxa de Água", "Medição e Leitura de Água",
-        "Taxa Extra -  Modernização Elevadores",
-        "Taxa Extra  - Reforma - Aquisição - Equipamentos Academia",
-        "Taxa Extra - Aquisição de Gerador",
-        "Taxa Extra - Melhorias no Condomínio",
-        "Taxa Extra Manut. Piscina",
-    ]
+    ] + _cols_extra_fluxo
 
     # Step 3 — payment reference list
     pmts = [
@@ -808,14 +813,18 @@ def _aba_fluxo_pagamentos(ws, df, params):
          "df_src": df_n, "n_esp": len(all_units), "units_set": all_units,
          "p_ini": None, "p_fim": None, "add_outros": False},
     ]
-    for te in params.get("taxas_extras", []):
-        col = EXTRA_COL_MAP.get(te["nome"])
-        if not col or col not in df.columns:
+    for col in _cols_extra_fluxo:
+        if not df[col].notna().any():
             continue
-        p_ini = pd.Period(year=te["inicio"][1], month=te["inicio"][0], freq="M") if te["inicio"] else None
-        p_fim = pd.Period(year=te["fim"][1],    month=te["fim"][0],    freq="M") if te["fim"] else None
+        te = next(
+            (t for t in params.get("taxas_extras", [])
+             if _norm_nome(t["nome"]) == _norm_nome(col)),
+            None
+        )
+        p_ini = pd.Period(year=te["inicio"][1], month=te["inicio"][0], freq="M") if te and te.get("inicio") else None
+        p_fim = pd.Period(year=te["fim"][1],    month=te["fim"][0],    freq="M") if te and te.get("fim")    else None
         pmts.append({
-            "nome": te["nome"], "col": col,
+            "nome": col, "col": col,
             "df_src": df_e, "n_esp": len(units_ext), "units_set": units_ext,
             "p_ini": p_ini, "p_fim": p_fim, "add_outros": False,
         })
@@ -1212,6 +1221,10 @@ def _gerar_excel(df, atrasados_sem_multa,
     kv(ws,r,"Campos obrigatórios faltantes",
        ", ".join(campos_faltantes) if campos_faltantes else "Nenhum",
        "C62828" if campos_faltantes else "2E7D32"); r+=1
+    taxas_sp = resultado.get("taxas_sem_parametro", [])
+    kv(ws,r,"Taxas extras sem parâmetro",
+       ", ".join(taxas_sp) if taxas_sp else "Nenhuma",
+       "C62828" if taxas_sp else "2E7D32"); r+=1
     qt_p = resultado["total_unidades_param"]; qt_d = resultado["total_unidades"]
     kv(ws,r,"Unidades no parâmetro / na 004A",
        f"{qt_p} / {qt_d}",
@@ -1223,7 +1236,7 @@ def _gerar_excel(df, atrasados_sem_multa,
        ", ".join(sem_dados) if sem_dados else "Nenhuma",
        "E65100" if sem_dados else "2E7D32"); r+=1
 
-    r+=1; titulo(ws,"INADIMPLÊNCIA",r); r+=1
+    r+=1; titulo(ws,"INADIMPLÊNCIA - Taxa Ordinária",r); r+=1
     kv(ws,r,"Boletos ausentes na 004A",resultado["qt_boletos_ausentes"],
        "C62828" if resultado["qt_boletos_ausentes"] else "2E7D32"); r+=1
     kv(ws,r,"Unidades inadimplentes",
