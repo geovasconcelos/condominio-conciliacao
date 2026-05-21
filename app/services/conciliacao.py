@@ -82,6 +82,12 @@ def processar_conciliacao(path_params: str, path_dados: str,
     df_extra  = df[df["Tipo Cobrança"] == "EXTRA"].copy()
     df_acordo = df[df["Tipo Cobrança"] == "ACORDO"].copy()
 
+    # Detecta colunas "Taxa Extra*" presentes na 004A — usado em seções 3b e 6
+    cols_extra_004a = [
+        col for col in df.columns
+        if str(col).startswith("Taxa Extra") and df[col].notna().any()
+    ]
+
     unidades_dados   = set(df["Unidade"].unique()) - {""}
     unidades_params  = set(params["unidades"].keys())
     sindicos         = set(params["sindicos"])
@@ -126,9 +132,10 @@ def processar_conciliacao(path_params: str, path_dados: str,
                     "Motivo":          "Síndico isento" if isento else "Divergência de taxa",
                 })
 
-    # ── 3b. Inadimplência — boletos ausentes na 004A ─────────────
-    # A 004A só contém registros PAGOS. Meses sem registro = inadimplência.
-    # Exclusão: unidades com ACORDO posterior ao mês ausente tiveram a dívida regularizada.
+    # ── 3b. Inadimplência — pagamentos ausentes na 004A ──────────
+    # Cada coluna de pagamento é verificada independentemente, somando
+    # todas as linhas da unidade no mês. Detecta boletos separados por
+    # tipo de cobrança (p.ex. boleto próprio de água não pago).
     boletos_ausentes = []
 
     all_months = pd.period_range(
@@ -136,10 +143,10 @@ def processar_conciliacao(path_params: str, path_dados: str,
         df["Vencimento_dt"].max().to_period("M"),
         freq="M"
     )
-    df_n_mes = df_normal.copy()
-    df_n_mes["_mes"] = df_n_mes["Vencimento_dt"].dt.to_period("M")
-    df_e_mes = df_extra.copy()
-    df_e_mes["_mes"] = df_e_mes["Vencimento_dt"].dt.to_period("M")
+
+    df_pago = df[df["Tipo Cobrança"] != "ACORDO"].copy()
+    df_pago["_mes"] = df_pago["Vencimento_dt"].dt.to_period("M")
+
     df_ac = df_acordo.copy()
     df_ac["_mes"] = df_ac["Vencimento_dt"].dt.to_period("M")
     acordo_meses = {
@@ -147,84 +154,114 @@ def processar_conciliacao(path_params: str, path_dados: str,
         for u, g in df_ac.groupby("Unidade")
     }
 
-    # NORMAL: boleto de taxa ordinária ausente
-    if taxa_padrao > 0:
-        for unidade, p in params["unidades"].items():
-            isento = unidade in sindicos and params["isencao_sindico"]
-            if isento:
+    units_com_agua = set()
+    if "Taxa de Água" in df.columns:
+        units_com_agua = set(
+            df_pago[df_pago["Taxa de Água"].fillna(0) > 0]["Unidade"].unique()
+        )
+
+    for unidade, p in params["unidades"].items():
+        isento   = unidade in sindicos and params["isencao_sindico"]
+        rows_u   = df_pago[df_pago["Unidade"] == unidade]
+        u_acords = acordo_meses.get(unidade, set())
+
+        for mes in all_months:
+            rows_mes = rows_u[rows_u["_mes"] == mes]
+            comp_str = f"{mes.month:02d}/{mes.year}"
+
+            if any(a >= mes for a in u_acords):
                 continue
-            taxa_esp = p["taxa_ordinaria"] or taxa_padrao
-            if not taxa_esp or taxa_esp < 0.05:
-                continue
-            regs_u   = df_n_mes[df_n_mes["Unidade"] == unidade]
-            u_acords = acordo_meses.get(unidade, set())
-            for mes in all_months:
-                regs_mes = regs_u[regs_u["_mes"] == mes]
-                max_taxa = float(regs_mes["Taxa Ordinária"].max()) if len(regs_mes) > 0 else 0.0
-                if pd.isna(max_taxa):
-                    max_taxa = 0.0
-                if max_taxa < 0.05:
-                    if any(a >= mes for a in u_acords):
-                        continue  # débito regularizado via ACORDO
+
+            # Taxa Ordinária
+            if not isento:
+                taxa_esp = p.get("taxa_ordinaria") or taxa_padrao
+                if taxa_esp and taxa_esp >= 0.05:
+                    total_ord = float(rows_mes["Taxa Ordinária"].fillna(0).sum()) if "Taxa Ordinária" in rows_mes.columns else 0.0
+                    if total_ord < 0.05:
+                        boletos_ausentes.append({
+                            "Unidade":     unidade,
+                            "Competência": comp_str,
+                            "Taxa":        "Taxa Ordinária",
+                            "tipo_inadin": "NORMAL",
+                        })
+
+            # Taxa de Água (só para unidades que historicamente pagam água)
+            if unidade in units_com_agua:
+                total_agua = float(rows_mes["Taxa de Água"].fillna(0).sum()) if "Taxa de Água" in rows_mes.columns else 0.0
+                if total_agua < 0.05:
                     boletos_ausentes.append({
                         "Unidade":     unidade,
-                        "Competência": f"{mes.month:02d}/{mes.year}",
-                        "tipo_inadin": "NORMAL",
+                        "Competência": comp_str,
+                        "Taxa":        "Taxa de Água",
+                        "tipo_inadin": "AGUA",
                     })
 
-    # EXTRA: boleto de taxas extras ausente (unidades com tem_taxa_extra=True)
-    if params["taxas_extras"]:
-        def _extra_ativo(mes):
-            for te in params["taxas_extras"]:
-                if not te["valor"] or te["valor"] < 0.05:
-                    continue
-                if te["inicio"] and te["fim"]:
-                    p_ini = pd.Period(year=te["inicio"][1], month=te["inicio"][0], freq="M")
-                    p_fim = pd.Period(year=te["fim"][1],    month=te["fim"][0],    freq="M")
-                    if p_ini <= mes <= p_fim:
-                        return True
-                else:
-                    return True
-            return False
+            # Medição e Leitura de Água
+            if params.get("taxa_medicao", 0) > 0 and "Medição e Leitura de Água" in df.columns:
+                total_med = float(rows_mes["Medição e Leitura de Água"].fillna(0).sum()) if "Medição e Leitura de Água" in rows_mes.columns else 0.0
+                if total_med < 0.05:
+                    boletos_ausentes.append({
+                        "Unidade":     unidade,
+                        "Competência": comp_str,
+                        "Taxa":        "Medição e Leitura de Água",
+                        "tipo_inadin": "MEDICAO",
+                    })
 
-        meses_extra_ativos = [m for m in all_months if _extra_ativo(m)]
-        normal_set = {(b["Unidade"], b["Competência"]) for b in boletos_ausentes}
+            # Taxa Extra* por coluna (só para unidades com tem_taxa_extra)
+            if p.get("tem_taxa_extra"):
+                for col in cols_extra_004a:
+                    taxa_param = next(
+                        (te for te in params.get("taxas_extras", [])
+                         if _norm_nome(te["nome"]) == _norm_nome(col)),
+                        None
+                    )
+                    if taxa_param is None or not (taxa_param.get("valor") or 0) >= 0.05:
+                        continue
+                    inicio = taxa_param.get("inicio")
+                    fim    = taxa_param.get("fim")
+                    no_periodo = True
+                    if inicio and fim:
+                        p_ini = pd.Period(year=inicio[1], month=inicio[0], freq="M")
+                        p_fim = pd.Period(year=fim[1],    month=fim[0],    freq="M")
+                        no_periodo = p_ini <= mes <= p_fim
+                    if not no_periodo:
+                        continue
+                    total_extra = float(rows_mes[col].fillna(0).sum()) if col in rows_mes.columns else 0.0
+                    if total_extra < 0.05:
+                        boletos_ausentes.append({
+                            "Unidade":     unidade,
+                            "Competência": comp_str,
+                            "Taxa":        col,
+                            "tipo_inadin": "EXTRA",
+                        })
 
-        for unidade, p in params["unidades"].items():
-            if not p.get("tem_taxa_extra"):
-                continue
-            regs_u   = df_e_mes[df_e_mes["Unidade"] == unidade]
-            u_acords = acordo_meses.get(unidade, set())
-            for mes in meses_extra_ativos:
-                comp_str = f"{mes.month:02d}/{mes.year}"
-                if (unidade, comp_str) in normal_set:
-                    continue  # já listado como NORMAL (inclui encargos extras)
-                if len(regs_u[regs_u["_mes"] == mes]) > 0:
-                    continue  # boleto EXTRA existe
-                if any(a >= mes for a in u_acords):
-                    continue  # regularizado via ACORDO
-                boletos_ausentes.append({
-                    "Unidade":     unidade,
-                    "Competência": comp_str,
-                    "tipo_inadin": "EXTRA",
-                })
-
-    # ── 3c. Comparação com relatório PDF do cliente ─────────────
-    pdf_erros       = []
+    # ── 3c. Comparação com relatório PDF do cliente ──────────────
+    pdf_erros        = []
     pdf_divergencias = []
-    pdf_comparado   = False
-    pdf_unidades    = []
+    pdf_comparado    = False
+    pdf_unidades     = []
+    excel_divergencias = []
+    excel_comparado    = False
+    excel_unidades     = []
+    _excel_registros   = []   # guardado para usar após seções 4-6
 
     if path_pdf:
-        from app.services.pdf_inadimplencia import (
-            parsear_pdf_inadimplencia, comparar_com_sistema
-        )
-        pdf_registros, pdf_erros = parsear_pdf_inadimplencia(path_pdf)
-        if pdf_registros:
-            pdf_comparado    = True
-            pdf_unidades     = sorted({r["unidade"] for r in pdf_registros},
-                                      key=lambda x: x.zfill(10))
-            pdf_divergencias = comparar_com_sistema(pdf_registros, boletos_ausentes)
+        ext = os.path.splitext(path_pdf)[1].lower()
+
+        if ext == ".pdf":
+            from app.services.pdf_inadimplencia import (
+                parsear_pdf_inadimplencia, comparar_com_sistema
+            )
+            pdf_registros, pdf_erros = parsear_pdf_inadimplencia(path_pdf)
+            if pdf_registros:
+                pdf_comparado    = True
+                pdf_unidades     = sorted({r["unidade"] for r in pdf_registros},
+                                          key=lambda x: x.zfill(10))
+                pdf_divergencias = comparar_com_sistema(pdf_registros, boletos_ausentes)
+
+        elif ext in (".xlsx", ".xls"):
+            from app.services.excel_inadimplencia import parsear_excel_inadimplencia
+            _excel_registros, pdf_erros = parsear_excel_inadimplencia(path_pdf)
 
     # ── 4. Taxa de Água ────────────────────────────────────────
     problemas_agua = []
@@ -268,12 +305,6 @@ def processar_conciliacao(path_params: str, path_dados: str,
     # ── 6. Taxas Extras ────────────────────────────────────────
     inconsistencias_extra = []
     taxas_sem_parametro   = []
-
-    # Detecta todas as colunas "Taxa Extra*" presentes na 004A com dados
-    cols_extra_004a = [
-        col for col in df.columns
-        if str(col).startswith("Taxa Extra") and df[col].notna().any()
-    ]
 
     df_e_unidades = df_extra[df_extra["Unidade"].isin(
         [u for u, p in params["unidades"].items() if p["tem_taxa_extra"]]
@@ -330,6 +361,50 @@ def processar_conciliacao(path_params: str, path_dados: str,
                         "Diferença (R$)":  valor_real,
                         "Motivo":          "Cobrança fora do período vigente",
                     })
+
+    # ── 6b. Comparação com relatório Excel ──────────────────────
+    if _excel_registros:
+        # Pares únicos (unidade, mês) de cada lado
+        cliente_set = {(r["unidade"], r["competencia"]) for r in _excel_registros}
+
+        # Sistema: agrupa taxas ausentes por (unidade, mês)
+        sistema_taxas: dict = {}
+        for b in boletos_ausentes:
+            key = (b["Unidade"], b["Competência"])
+            sistema_taxas.setdefault(key, []).append(b["Taxa"])
+        sistema_set = set(sistema_taxas.keys())
+
+        excel_divergencias = []
+
+        # 1. Sistema detectou inadimplência que não consta no relatório do cliente
+        for key in sorted(sistema_set - cliente_set,
+                          key=lambda x: (x[0].zfill(10), x[1])):
+            unidade, comp = key
+            taxas = sistema_taxas[key]
+            excel_divergencias.append({
+                "Tipo":        "No sistema, não no cliente",
+                "Unidade":     unidade,
+                "Competência": comp,
+                "Detalhe":     f"Inadimplência detectada ({', '.join(taxas)}) — não consta no relatório do cliente.",
+            })
+
+        # 2. Cliente reporta inadimplência que o sistema não detectou
+        vistos: set = set()
+        for r in _excel_registros:
+            key = (r["unidade"], r["competencia"])
+            if key in vistos or key in sistema_set:
+                continue
+            vistos.add(key)
+            excel_divergencias.append({
+                "Tipo":        "No cliente, não no sistema",
+                "Unidade":     r["unidade"],
+                "Competência": r["competencia"],
+                "Detalhe":     "Consta como inadimplente no relatório do cliente mas o sistema não detectou inadimplência.",
+            })
+
+        excel_comparado = True
+        excel_unidades  = sorted({r["unidade"] for r in _excel_registros},
+                                  key=lambda x: x.zfill(10))
 
     # ── 7. Multa ────────────────────────────────────────────────
     carencia    = params["carencia_dias"]
@@ -418,11 +493,14 @@ def processar_conciliacao(path_params: str, path_dados: str,
         "isencao_sindico":    params["isencao_sindico"],
         "ref_medicao":        _fmt_brl(params["taxa_medicao"]),
         "qt_taxas_extras_param": len(params["taxas_extras"]),
-        # Comparação PDF
+        # Comparação relatório do cliente
         "pdf_comparado":         pdf_comparado,
         "pdf_erros":             pdf_erros,
         "pdf_unidades":          pdf_unidades,
         "qt_diverg_pdf":         len(pdf_divergencias),
+        "excel_comparado":       excel_comparado,
+        "excel_unidades":        excel_unidades,
+        "qt_diverg_excel":       len(excel_divergencias),
         # Validação de parâmetros
         "campos_faltantes":      campos_faltantes,
         "sem_parametro":         sem_parametro,
@@ -468,6 +546,7 @@ def processar_conciliacao(path_params: str, path_dados: str,
                  pd.DataFrame(inconsistencias_extra),
                  pd.DataFrame(boletos_ausentes),
                  pd.DataFrame(pdf_divergencias),
+                 pd.DataFrame(excel_divergencias),
                  sem_parametro, sem_dados, campos_faltantes,
                  resultado, params, output_dir, session_id)
 
@@ -526,13 +605,12 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
     c.fill  = _f(RED); c.alignment = _al("center")
 
     _add_nota(ws, 2, NCOLS,
-        "O QUE ESTA ABA VERIFICA: dois tipos de inadimplência são detectados — "
-        "(A) BOLETO NORMAL ausente: unidade sem registro NORMAL com taxa ordinária > R$ 0,05 no mês; "
-        "a composição exibe taxa ordinária, água, medição e taxas extras (quando aplicável). "
-        "(B) BOLETO EXTRA ausente: unidades com taxa extra no cadastro que não possuem registro EXTRA "
-        "na 004A em meses em que pelo menos uma taxa extra está vigente, mas que pagaram o boleto NORMAL; "
-        "a composição exibe apenas as taxas extras devidas. "
-        "A base 004A contém apenas registros de pagamentos efetivados; ausência de registro = ausência de pagamento.\n"
+        "O QUE ESTA ABA VERIFICA: cada coluna de pagamento (Taxa Ordinária, Taxa de Água, Medição, "
+        "Taxas Extras) é verificada independentemente para cada unidade+mês, somando todas as linhas "
+        "do mês. Isso detecta inadimplência mesmo quando cada tipo de cobrança tem seu próprio boleto "
+        "separado — se o boleto de água não foi pago, por exemplo, a unidade aparece aqui mesmo que "
+        "o boleto de taxa condominial tenha sido pago. "
+        "A base 004A contém apenas registros de pagamentos efetivados; ausência de valor = ausência de pagamento.\n"
         "CRITÉRIOS DE EXCLUSÃO: (1) Síndico isento — unidade não é verificada quando isenção está configurada; "
         "(2) Regularização via ACORDO — se a unidade possui registro de ACORDO na 004A com vencimento igual ou "
         "posterior ao mês ausente, o débito é considerado regularizado e o mês não é listado.\n"
@@ -584,11 +662,11 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
         if len(grp_m):
             med_est[unidade]  = float(grp_m.loc[grp_m["Vencimento_dt"].idxmax(), col_m])
 
-    # Agrupa meses ausentes por unidade: (competência, tipo_inadin)
+    # Agrupa pagamentos ausentes por unidade: (competência, taxa)
     unidades_meses = defaultdict(list)
     for _, row in df_inadimplentes.iterrows():
-        tipo = str(row["tipo_inadin"]) if "tipo_inadin" in row.index else "NORMAL"
-        unidades_meses[str(row["Unidade"])].append((str(row["Competência"]), tipo))
+        taxa = str(row["Taxa"]) if "Taxa" in row.index else "Taxa Ordinária"
+        unidades_meses[str(row["Unidade"])].append((str(row["Competência"]), taxa))
 
     cat_totals  = defaultdict(lambda: {"valor": 0.0, "juros": 0.0, "multa": 0.0, "total": 0.0})
     grand       = {"valor": 0.0, "juros": 0.0, "multa": 0.0, "total": 0.0}
@@ -635,7 +713,7 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
         u_tot = {"valor": 0.0, "juros": 0.0, "multa": 0.0, "total": 0.0}
         bg_toggle = 0
 
-        for comp, tipo in sorted(competencias, key=lambda x: x[0]):
+        for comp, taxa in sorted(competencias, key=lambda x: x[0]):
             mes, ano = int(comp[:2]), int(comp[3:])
             try:
                 venc_date = pd.Timestamp(year=ano, month=mes, day=dia_venc)
@@ -644,42 +722,43 @@ def _aba_inadimplencia(ws, df, params, df_inadimplentes):
             venc_s = venc_date.strftime("%d/%m/%Y")
             dias   = max(0, (ref_date - venc_date).days - carencia)
 
-            p_u    = params["unidades"].get(unidade, {})
-            t_ord  = float(p_u.get("taxa_ordinaria") or params["taxa_ord_padrao"] or 0)
-            t_agua = agua_est.get(unidade, 0.0)
-            t_med  = med_est.get(unidade, taxa_med_p)
+            p_u = params["unidades"].get(unidade, {})
 
-            charges = []
-            # Boleto NORMAL ausente: todos os encargos; EXTRA ausente: só taxas extras
-            if tipo == "NORMAL":
-                if t_ord  > 0.05: charges.append(("Taxa Ordinária",            t_ord,  "Taxa Ordinária"))
-                if t_agua > 0.05: charges.append(("Taxa de Água (*)",          t_agua, "Taxa de Água"))
-                if t_med  > 0.05: charges.append(("Medição e Leitura de Água", t_med,  "Medição e Leitura de Água"))
-
-            if p_u.get("tem_taxa_extra"):
+            # Valor esperado para este pagamento específico
+            if taxa == "Taxa Ordinária":
+                valor = float(p_u.get("taxa_ordinaria") or params["taxa_ord_padrao"] or 0)
+            elif taxa == "Taxa de Água":
+                valor = agua_est.get(unidade, 0.0)
+            elif taxa == "Medição e Leitura de Água":
+                valor = med_est.get(unidade, taxa_med_p)
+            else:
+                valor = 0.0
                 for te in taxas_ext:
-                    if not te["valor"] or te["valor"] < 0.05:
-                        continue
-                    in_p = True
-                    if te["inicio"] and te["fim"]:
-                        d0 = pd.Timestamp(year=te["inicio"][1], month=te["inicio"][0], day=1)
-                        d1 = pd.Timestamp(year=te["fim"][1],    month=te["fim"][0],    day=28)
-                        in_p = d0 <= venc_date <= d1
-                    if in_p:
-                        charges.append((te["nome"], float(te["valor"]), te["nome"]))
+                    if _norm_nome(te.get("nome", "")) == _norm_nome(taxa):
+                        in_p = True
+                        if te.get("inicio") and te.get("fim"):
+                            d0 = pd.Timestamp(year=te["inicio"][1], month=te["inicio"][0], day=1)
+                            d1 = pd.Timestamp(year=te["fim"][1],    month=te["fim"][0],    day=28)
+                            in_p = d0 <= venc_date <= d1
+                        if in_p:
+                            valor = float(te.get("valor") or 0)
+                        break
 
-            for desc, valor, cat_key in charges:
-                multa  = valor * pct_multa / 100
-                juros  = valor * pct_juros / 100 * (dias / 30) if dias > 0 else 0.0
-                bg     = LGRAY if bg_toggle % 2 == 0 else WHITE
-                total  = _charge_row(r, venc_s, comp, desc,
-                                     valor, juros, multa, bg)
-                r += 1; bg_toggle += 1
+            if valor < 0.05:
+                continue
 
-                for k, v in [("valor",valor),("juros",juros),("multa",multa),("total",total)]:
-                    u_tot[k]              += v
-                    cat_totals[cat_key][k] += v
-                    grand[k]               += v
+            desc    = taxa + (" (*)" if taxa == "Taxa de Água" else "")
+            cat_key = taxa
+            multa   = valor * pct_multa / 100
+            juros   = valor * pct_juros / 100 * (dias / 30) if dias > 0 else 0.0
+            bg      = LGRAY if bg_toggle % 2 == 0 else WHITE
+            total   = _charge_row(r, venc_s, comp, desc, valor, juros, multa, bg)
+            r += 1; bg_toggle += 1
+
+            for k, v in [("valor", valor), ("juros", juros), ("multa", multa), ("total", total)]:
+                u_tot[k]               += v
+                cat_totals[cat_key][k] += v
+                grand[k]               += v
 
         # Linha de total da unidade
         ws.merge_cells(f"A{r}:D{r}")
@@ -1050,13 +1129,13 @@ def _aba_conferencia_pdf(ws, df_diverg, resultado):
 
     _add_nota(ws, 2, NCOLS,
         "O QUE ESTA ABA VERIFICA: confronto entre o relatório de inadimplência fornecido pelo cliente "
-        "(gerado pelo sistema Controlar — 'Inadimplência com composição detalhado') e a inadimplência "
-        "detectada por este sistema a partir da base 004A.\n"
-        "TIPOS DE DIVERGÊNCIA: (1) 'No PDF, não no sistema' — unidade ou mês consta no relatório do cliente "
-        "mas o sistema não detectou inadimplência; (2) 'No sistema, não no PDF' — o sistema detectou "
-        "inadimplência mas a unidade/mês não aparece no relatório do cliente.\n"
+        "(gerado pelo sistema Controlar — 'Inadimplência com composição detalhado') e as anomalias "
+        "detectadas por este sistema a partir da base 004A.\n"
+        "PARA RELATÓRIO PDF: verifica se as unidades/meses do PDF correspondem às inadimplências do sistema. "
+        "PARA RELATÓRIO EXCEL: verifica se cada anomalia detectada pelo sistema (boleto ausente, taxa divergente, "
+        "água/medição/taxa extra com problema) está coberta pelo relatório do cliente — mostra o que falta.\n"
         "ATENÇÃO: divergências não necessariamente indicam erro — podem refletir datas de corte diferentes, "
-        "acordos registrados após a geração do PDF, ou meses com somente taxas extras em divergência."
+        "acordos registrados após a geração do relatório, ou situações já regularizadas."
     )
 
     # Linha de metadados
@@ -1094,10 +1173,14 @@ def _aba_conferencia_pdf(ws, df_diverg, resultado):
     r += 1
 
     COR_TIPO = {
-        "No PDF, não no sistema":  C_RED,
-        "No sistema, não no PDF":  WARN,
-        "Mês no PDF, não no sistema": C_RED,
-        "Mês no sistema, não no PDF": WARN,
+        # PDF
+        "No PDF, não no sistema":       C_RED,
+        "No sistema, não no PDF":       WARN,
+        "Mês no PDF, não no sistema":   C_RED,
+        "Mês no sistema, não no PDF":   WARN,
+        # Excel
+        "No sistema, não no cliente":   WARN,
+        "No cliente, não no sistema":   C_RED,
     }
 
     for idx, (_, row) in enumerate(df_diverg.iterrows()):
@@ -1129,7 +1212,7 @@ def _aba_conferencia_pdf(ws, df_diverg, resultado):
 def _gerar_excel(df, atrasados_sem_multa,
                  multa_inconsistente, multa_em_zero,
                  df_taxa, df_agua, df_medicao, df_extra, df_inadimplentes,
-                 df_diverg_pdf,
+                 df_diverg_pdf, df_diverg_excel,
                  sem_param, sem_dados, campos_faltantes,
                  resultado, params, output_dir, session_id):
     import openpyxl
@@ -1205,7 +1288,7 @@ def _gerar_excel(df, atrasados_sem_multa,
         "O QUE ESTA ABA VERIFICA: painel consolidado da conciliação entre a planilha de parâmetros "
         "e a base 004A (pagamentos realizados). Verificações realizadas: "
         "(1) Validação dos parâmetros — campos obrigatórios, unidades sem parâmetro e vice-versa; "
-        "(2) Inadimplência — boletos NORMAL ausentes na 004A, excluindo síndico isento e unidades com ACORDO posterior; "
+        "(2) Inadimplência — pagamentos ausentes na 004A por coluna (Taxa Ordinária, Água, Medição, Extras), excluindo síndico isento e unidades com ACORDO posterior; "
         "(3) Inconsistências de valores — taxa ordinária, água, medição e taxas extras; "
         "(4) Multa e atrasos — atrasados sem multa, multa fora da faixa esperada e multa sobre taxa zero. "
         "Para detalhes de cada verificação, consulte as abas específicas desta planilha."
@@ -1237,7 +1320,7 @@ def _gerar_excel(df, atrasados_sem_multa,
        "E65100" if sem_dados else "2E7D32"); r+=1
 
     r+=1; titulo(ws,"INADIMPLÊNCIA - Taxa Ordinária",r); r+=1
-    kv(ws,r,"Boletos ausentes na 004A",resultado["qt_boletos_ausentes"],
+    kv(ws,r,"Pagamentos ausentes na 004A",resultado["qt_boletos_ausentes"],
        "C62828" if resultado["qt_boletos_ausentes"] else "2E7D32"); r+=1
     kv(ws,r,"Unidades inadimplentes",
        ", ".join(resultado["unidades_inadimplentes"]) if resultado["unidades_inadimplentes"] else "Nenhuma",
@@ -1268,6 +1351,14 @@ def _gerar_excel(df, atrasados_sem_multa,
     if resultado.get("pdf_comparado"):
         ws_conf = wb.create_sheet("Conferência — PDF")
         _aba_conferencia_pdf(ws_conf, df_diverg_pdf, resultado)
+
+    # Conferência Excel (só cria se Excel foi comparado)
+    if resultado.get("excel_comparado"):
+        ws_conf_xl = wb.create_sheet("Conferência — Excel")
+        _r_xl = {**resultado,
+                 "pdf_unidades":  resultado.get("excel_unidades", []),
+                 "qt_diverg_pdf": resultado.get("qt_diverg_excel", 0)}
+        _aba_conferencia_pdf(ws_conf_xl, df_diverg_excel, _r_xl)
 
     # Fluxo de Pagamentos
     ws_fluxo = wb.create_sheet("Fluxo de Pagamentos")

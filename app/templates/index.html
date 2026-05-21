@@ -60,11 +60,11 @@
                         Relatório de Inadimplência <span class="badge-opcional">opcional</span>
                     </label>
                     <div class="dropzone">
-                        <input type="file" name="relatorio_pdf" id="relatorio_pdf" accept=".pdf">
-                        <p class="dz-text">Clique ou arraste o PDF do cliente</p>
+                        <input type="file" name="relatorio_pdf" id="relatorio_pdf" accept=".pdf,.xlsx,.xls">
+                        <p class="dz-text">Clique ou arraste o relatório do cliente</p>
                         <p class="dz-filename" id="fn-relatorio_pdf"></p>
                     </div>
-                    <p class="upload-hint">Formato Controlar: "Inadimplência com composição (detalhado)". Quando enviado, gera a aba <strong>Conferência — PDF</strong> no Excel.</p>
+                    <p class="upload-hint">Formato Controlar: "Inadimplência com composição (detalhado)" — aceita <strong>.pdf</strong> ou <strong>.xlsx</strong>. Gera a aba <strong>Conferência</strong> no Excel de saída.</p>
                 </div>
 
                 {% with messages = get_flashed_messages() %}
@@ -90,7 +90,7 @@
 
         <div class="sidebar-info">
             Planilhas: <strong style="color:#29B6F6">.xlsx</strong> / <strong style="color:#29B6F6">.xls</strong><br>
-            PDF: <strong style="color:#29B6F6">.pdf</strong><br>
+            Relatório: <strong style="color:#29B6F6">.pdf</strong> ou <strong style="color:#29B6F6">.xlsx</strong><br>
             Tamanho máximo: 10 MB por arquivo.
         </div>
     </aside>
@@ -247,12 +247,12 @@
             </div>
         </div>
 
-        <!-- Seção: Conferência com relatório PDF -->
+        <!-- Seção: Conferência com relatório do cliente -->
         {% if resultado.pdf_erros %}
         <div>
             <p class="section-heading section-heading-erro">Relatório do Cliente — Erros de Leitura</p>
             <div class="pdf-erros-box">
-                <p class="pdf-erro-intro">O sistema não conseguiu processar o PDF enviado. Verifique os erros abaixo e confirme que o arquivo é um relatório "Inadimplência com composição (detalhado)" gerado pelo Controlar.</p>
+                <p class="pdf-erro-intro">O sistema não conseguiu processar o arquivo enviado. Verifique os erros abaixo e confirme que o arquivo é um relatório "Inadimplência com composição (detalhado)" gerado pelo Controlar.</p>
                 <table class="pdf-erros-table">
                     <thead><tr><th>Página</th><th>Linha</th><th>Mensagem</th></tr></thead>
                     <tbody>
@@ -269,18 +269,38 @@
         </div>
         {% elif resultado.pdf_comparado %}
         <div>
-            <p class="section-heading">Conferência com Relatório do Cliente</p>
+            <p class="section-heading">Conferência com Relatório do Cliente (PDF)</p>
             <div class="checks-grid">
                 <div class="check-item {% if resultado.qt_diverg_pdf > 0 %}check-alerta{% else %}check-ok{% endif %}">
                     <span class="check-icon">{% if resultado.qt_diverg_pdf > 0 %}!{% else %}✓{% endif %}</span>
                     <div>
-                        <strong>Comparação com PDF do cliente</strong>
+                        <strong>Comparação por boleto (unidade / mês)</strong>
                         <span>
                             Unidades no relatório: <strong>{{ resultado.pdf_unidades | join(", ") }}</strong><br>
                             {% if resultado.qt_diverg_pdf > 0 %}
                             {{ resultado.qt_diverg_pdf }} divergência(s) encontrada(s) — detalhes na aba <strong>"Conferência — PDF"</strong> do Excel.
                             {% else %}
                             Sistema e relatório do cliente estão em perfeita concordância.
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% elif resultado.excel_comparado %}
+        <div>
+            <p class="section-heading">Conferência com Relatório do Cliente (Excel)</p>
+            <div class="checks-grid">
+                <div class="check-item {% if resultado.qt_diverg_excel > 0 %}check-alerta{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.qt_diverg_excel > 0 %}!{% else %}✓{% endif %}</span>
+                    <div>
+                        <strong>Comparação por taxa (unidade / mês / valor)</strong>
+                        <span>
+                            Unidades no relatório: <strong>{{ resultado.excel_unidades | join(", ") }}</strong><br>
+                            {% if resultado.qt_diverg_excel > 0 %}
+                            {{ resultado.qt_diverg_excel }} item(ns) comparado(s) — detalhes na aba <strong>"Conferência — Excel"</strong> do Excel de saída.
+                            {% else %}
+                            Nenhum item encontrado no relatório do cliente.
                             {% endif %}
                         </span>
                     </div>

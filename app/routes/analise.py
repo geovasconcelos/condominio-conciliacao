@@ -43,8 +43,9 @@ def analisar():
         return redirect(url_for("main.index"))
 
     tem_pdf = arquivo_pdf and arquivo_pdf.filename
-    if tem_pdf and not _valida(arquivo_pdf.filename, EXTENSOES_PDF):
-        flash("O relatório do cliente deve ser um arquivo .pdf.")
+    if tem_pdf and not (_valida(arquivo_pdf.filename, EXTENSOES_PDF)
+                        or _valida(arquivo_pdf.filename, EXTENSOES)):
+        flash("O relatório do cliente deve ser um arquivo .pdf ou .xlsx.")
         return redirect(url_for("main.index"))
 
     session_id = str(uuid.uuid4())
@@ -59,7 +60,8 @@ def analisar():
     arquivo_dados.save(path_dados)
 
     if tem_pdf:
-        path_pdf = os.path.join(upload_dir, f"{session_id}_relatorio.pdf")
+        ext_rel  = arquivo_pdf.filename.rsplit(".", 1)[1].lower()
+        path_pdf = os.path.join(upload_dir, f"{session_id}_relatorio.{ext_rel}")
         arquivo_pdf.save(path_pdf)
 
     # Apaga o output da análise anterior desta sessão, se o usuário não fez download

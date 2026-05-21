@@ -150,23 +150,26 @@ def comparar_com_sistema(pdf_registros: list, boletos_ausentes: list) -> list:
 
     divergencias = []
 
-    # Unidades no PDF não detectadas pelo sistema
+    # Unidades no cliente não detectadas pelo sistema — uma linha por mês
     for u in sorted(pdf_units - sistema_units, key=lambda x: x.zfill(10)):
-        divergencias.append({
-            "Tipo":        "No PDF, não no sistema",
-            "Unidade":     u,
-            "Competência": "—",
-            "Detalhe":     "Unidade consta como inadimplente no relatório do cliente mas o sistema não detectou inadimplência.",
-        })
+        for mes in sorted({comp for (un, comp) in pdf_set if un == u}):
+            divergencias.append({
+                "Tipo":        "No PDF, não no sistema",
+                "Unidade":     u,
+                "Competência": mes,
+                "Detalhe":     "Unidade/mês consta como inadimplente no relatório do cliente mas o sistema não detectou inadimplência.",
+            })
 
-    # Unidades no sistema não presentes no PDF
+    # Unidades no sistema não presentes no cliente — uma linha por mês
     for u in sorted(sistema_units - pdf_units, key=lambda x: x.zfill(10)):
-        divergencias.append({
-            "Tipo":        "No sistema, não no PDF",
-            "Unidade":     u,
-            "Competência": "—",
-            "Detalhe":     "Sistema detectou inadimplência mas a unidade não aparece no relatório do cliente.",
-        })
+        for mes in sorted({comp for (un, comp) in sistema_meses if un == u}):
+            tipo = sistema.get((u, mes), "NORMAL")
+            divergencias.append({
+                "Tipo":        "No sistema, não no PDF",
+                "Unidade":     u,
+                "Competência": mes,
+                "Detalhe":     f"Sistema detectou inadimplência ({tipo}) neste mês mas a unidade não aparece no relatório do cliente.",
+            })
 
     # Meses divergentes para unidades em comum
     for u in sorted(pdf_units & sistema_units, key=lambda x: x.zfill(10)):
