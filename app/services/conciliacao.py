@@ -8,6 +8,10 @@ import pandas as pd
 
 from app.services.parametros import ler_parametros
 
+
+class ValidacaoError(Exception):
+    """Erro de validação nos arquivos de entrada — mensagem amigável ao usuário."""
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _br_to_float(s):
@@ -50,9 +54,47 @@ def _norm_nome(s: str) -> str:
 
 # ── Carregamento dos dados ──────────────────────────────────────────────────────
 
+COLUNAS_OBRIGATORIAS = [
+    "Tipo Lançamento", "Tipo Cobrança", "Unidade/Bloco",
+    "Vencimento", "Crédito", "Total",
+]
+TIPOS_COBRANCA_VALIDOS = {"NORMAL", "EXTRA", "ACORDO"}
+
+
 def _carregar_dados(path: str) -> pd.DataFrame:
     df = pd.read_excel(path, header=3)
+
+    ausentes = [c for c in COLUNAS_OBRIGATORIAS if c not in df.columns]
+    if ausentes:
+        raise ValidacaoError(
+            f"A planilha de dados está fora do formato esperado. "
+            f"Colunas não encontradas: {', '.join(ausentes)}. "
+            "Verifique se o arquivo correto foi enviado (relatório 004A)."
+        )
+
     df = df[df["Tipo Lançamento"].notna()].copy()
+
+    unidades_invalidas = sorted(
+        str(x) for x in df["Unidade/Bloco"].dropna().unique()
+        if not str(x).replace(".", "", 1).isdigit()
+    )
+    if unidades_invalidas:
+        raise ValidacaoError(
+            f"A planilha de dados contém valor(es) não numérico(s) na coluna "
+            f"'Unidade/Bloco': {', '.join(unidades_invalidas)}. "
+            "Remova ou corrija essas linhas no arquivo e tente novamente."
+        )
+
+    tipos_invalidos = sorted(
+        str(x) for x in df["Tipo Cobrança"].dropna().unique()
+        if str(x).upper() not in TIPOS_COBRANCA_VALIDOS
+    )
+    if tipos_invalidos:
+        raise ValidacaoError(
+            f"A planilha de dados contém tipo(s) de cobrança desconhecido(s): "
+            f"{', '.join(tipos_invalidos)}. "
+            f"Valores aceitos: {', '.join(sorted(TIPOS_COBRANCA_VALIDOS))}."
+        )
 
     for col in NUMERIC_COLS_BASE:
         if col in df.columns:
@@ -65,7 +107,7 @@ def _carregar_dados(path: str) -> pd.DataFrame:
     df["Credito_dt"]    = df["Crédito"].apply(_parse_date)
     df["dias_atraso"]   = (df["Credito_dt"] - df["Vencimento_dt"]).dt.days
     df["Unidade"]       = df["Unidade/Bloco"].apply(
-        lambda x: str(int(x)) if pd.notna(x) else ""
+        lambda x: str(int(float(x))) if pd.notna(x) else ""
     )
     return df
 
@@ -75,7 +117,18 @@ def _carregar_dados(path: str) -> pd.DataFrame:
 def processar_conciliacao(path_params: str, path_dados: str,
                           session_id: str, output_dir: str,
                           path_pdf: str | None = None) -> dict:
-    params = ler_parametros(path_params)
+    try:
+        params = ler_parametros(path_params)
+    except KeyError as e:
+        raise ValidacaoError(
+            f"A planilha de parâmetros não contém a aba esperada: {e}. "
+            "Verifique se o arquivo correto foi enviado."
+        ) from e
+    except Exception as e:
+        raise ValidacaoError(
+            f"Não foi possível ler a planilha de parâmetros: {e}"
+        ) from e
+
     df     = _carregar_dados(path_dados)
 
     df_normal = df[df["Tipo Cobrança"] == "NORMAL"].copy()

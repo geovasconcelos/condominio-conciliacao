@@ -4,7 +4,7 @@ from flask import (Blueprint, request, render_template, send_from_directory,
                    current_app, flash, redirect, url_for, session, abort,
                    after_this_request)
 
-from app.services.conciliacao import processar_conciliacao
+from app.services.conciliacao import processar_conciliacao, ValidacaoError
 
 analise_bp = Blueprint("analise", __name__)
 
@@ -69,14 +69,21 @@ def analisar():
     if old_id:
         _apagar(os.path.join(output_dir, f"{old_id}_analise.xlsx"))
 
-    resultado = processar_conciliacao(
-        path_params, path_dados, session_id, output_dir, path_pdf=path_pdf
-    )
-
-    _apagar(path_params)
-    _apagar(path_dados)
-    if path_pdf:
-        _apagar(path_pdf)
+    try:
+        resultado = processar_conciliacao(
+            path_params, path_dados, session_id, output_dir, path_pdf=path_pdf
+        )
+    except ValidacaoError as e:
+        flash(str(e))
+        return redirect(url_for("main.index"))
+    except Exception as e:
+        flash(f"Erro inesperado durante a análise: {e}")
+        return redirect(url_for("main.index"))
+    finally:
+        _apagar(path_params)
+        _apagar(path_dados)
+        if path_pdf:
+            _apagar(path_pdf)
 
     session["session_id"] = session_id
 
