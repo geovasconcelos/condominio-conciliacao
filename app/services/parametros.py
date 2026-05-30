@@ -147,9 +147,9 @@ def ler_parametros(path: str) -> dict:
             "obs":    v(row, 5),
         })
 
-    # Matriz por unidade: cols A=Unidade, B=Taxa Ord., C..C+N-1=S/N por taxa extra, última=Obs
+    # Matriz por unidade: A=Unidade, B=Taxa Ord., C/D/E=S/N por taxa (até 3), F=Obs (fixo)
     n_extras = len(params["taxas_extras"])
-    col_obs  = 3 + n_extras  # coluna de observações desloca conforme número de taxas
+    col_obs  = 6  # Observações sempre na col F, independente de quantas taxas existem
 
     for row in range(34, ws.max_row + 1):
         unidade_raw = v(row, 1)
