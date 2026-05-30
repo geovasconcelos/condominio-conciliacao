@@ -42,9 +42,12 @@ def _to_float(val):
 
 
 def _parse_periodo(texto):
-    """Converte 'abr/2025' → (4, 2025). Retorna None se inválido."""
+    """Converte 'abr/2025' ou datetime → (4, 2025). Retorna None se inválido."""
     if not texto:
         return None
+    import datetime as _dt
+    if isinstance(texto, (_dt.datetime, _dt.date)):
+        return (texto.month, texto.year)
     meses = {"jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,
              "jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12}
     m = re.match(r"(\w{3})/(\d{4})", str(texto).strip().lower())
