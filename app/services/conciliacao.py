@@ -152,14 +152,28 @@ def processar_conciliacao(path_params: str, path_dados: str,
 
     # ── 1. Campos faltantes no parâmetro ──────────────────────
     campos_faltantes = params["campos_faltantes"]
+    if not params.get("taxa_ord_padrao"):
+        raise ValidacaoError(
+            "A planilha de parâmetros não contém a Taxa Ordinária Padrão, "
+            "que é obrigatória para a análise de inconsistências. "
+            "Preencha o campo e tente novamente."
+        )
 
     # ── 2. Unidades sem parâmetro / parâmetro sem dados ───────
     sem_parametro = sorted(unidades_dados - unidades_params)
     sem_dados     = sorted(unidades_params - unidades_dados)
 
+    # Taxas extras no parâmetro sem coluna correspondente na 004A
+    nomes_extra_param = {_norm_nome(t["nome"]) for t in params.get("taxas_extras", [])}
+    nomes_extra_004a  = {_norm_nome(c) for c in cols_extra_004a}
+    taxas_param_sem_coluna = [
+        t["nome"] for t in params.get("taxas_extras", [])
+        if _norm_nome(t["nome"]) not in nomes_extra_004a
+    ]
+
     # ── 3. Taxa Ordinária ──────────────────────────────────────
     inconsistencias_taxa = []
-    taxa_padrao = params["taxa_ord_padrao"] or 0.0
+    taxa_padrao = params["taxa_ord_padrao"]
 
     for unidade, grp in df_normal.groupby("Unidade"):
         p = params["unidades"].get(unidade)
@@ -582,8 +596,9 @@ def processar_conciliacao(path_params: str, path_dados: str,
         "qt_prob_agua":       len(problemas_agua),
         "qt_prob_medicao":    len(problemas_medicao),
         # Taxa extra
-        "qt_inconsist_extra":    len(inconsistencias_extra),
-        "taxas_sem_parametro":   taxas_sem_parametro,
+        "qt_inconsist_extra":      len(inconsistencias_extra),
+        "taxas_sem_parametro":     taxas_sem_parametro,
+        "taxas_param_sem_coluna":  taxas_param_sem_coluna,
         # Atrasos
         "no_prazo":           no_prazo,
         "compensacao":        compensacao_banc,
@@ -1375,17 +1390,21 @@ def _gerar_excel(df, atrasados_sem_multa,
        ", ".join(campos_faltantes) if campos_faltantes else "Nenhum",
        "C62828" if campos_faltantes else "2E7D32"); r+=1
     taxas_sp = resultado.get("taxas_sem_parametro", [])
-    kv(ws,r,"Taxas extras sem parâmetro",
+    kv(ws,r,"Taxas extras sem parâmetro (004A → parâmetro)",
        ", ".join(taxas_sp) if taxas_sp else "Nenhuma",
        "C62828" if taxas_sp else "2E7D32"); r+=1
+    taxas_psc = resultado.get("taxas_param_sem_coluna", [])
+    kv(ws,r,"Taxas do parâmetro sem coluna na 004A (parâmetro → 004A)",
+       ", ".join(taxas_psc) if taxas_psc else "Nenhuma",
+       "C62828" if taxas_psc else "2E7D32"); r+=1
     qt_p = resultado["total_unidades_param"]; qt_d = resultado["total_unidades"]
     kv(ws,r,"Unidades no parâmetro / na 004A",
        f"{qt_p} / {qt_d}",
        "E65100" if qt_p != qt_d else "2E7D32"); r+=1
-    kv(ws,r,"Unidades nos dados sem parâmetro",
+    kv(ws,r,"Unidades nos dados sem parâmetro — EXCLUÍDAS DA ANÁLISE",
        ", ".join(sem_param) if sem_param else "Nenhuma",
-       "E65100" if sem_param else "2E7D32"); r+=1
-    kv(ws,r,"Unidades no parâmetro sem dados",
+       "C62828" if sem_param else "2E7D32"); r+=1
+    kv(ws,r,"Unidades no parâmetro sem dados na 004A",
        ", ".join(sem_dados) if sem_dados else "Nenhuma",
        "E65100" if sem_dados else "2E7D32"); r+=1
 

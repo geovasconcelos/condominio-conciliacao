@@ -85,7 +85,7 @@ def ler_parametros(path: str) -> dict:
         # Parâmetros globais (col B, linhas 11-17)
         "taxa_ord_padrao": _to_float(v(11, 2)),
         "dia_vencimento":  v(12, 2),
-        "carencia_dias":   int(v(13, 2)) if v(13, 2) else 4,
+        "carencia_dias":   int(_to_float(v(13, 2)) or 4),
         "pct_multa":       _to_float(v(14, 2)) or 2.0,
         "pct_juros":       _to_float(v(15, 2)) or 1.0,
         "juros_prorata":   str(v(16, 2) or "N").strip().upper() == "S",

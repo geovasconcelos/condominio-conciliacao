@@ -193,11 +193,11 @@
             {% endif %}
 
             <div class="checks-grid">
-                <div class="check-item {% if resultado.sem_parametro %}check-alerta{% else %}check-ok{% endif %}">
-                    <span class="check-icon">{% if resultado.sem_parametro %}!{% else %}✓{% endif %}</span>
+                <div class="check-item {% if resultado.sem_parametro %}check-erro{% else %}check-ok{% endif %}">
+                    <span class="check-icon">{% if resultado.sem_parametro %}✗{% else %}✓{% endif %}</span>
                     <div>
                         <strong>Unidades nos dados sem parâmetro</strong>
-                        <span>{% if resultado.sem_parametro %}{{ resultado.sem_parametro | join(", ") }}{% else %}Todas as unidades estão parametrizadas{% endif %}</span>
+                        <span>{% if resultado.sem_parametro %}{{ resultado.sem_parametro | join(", ") }} — <strong>excluídas da análise de taxas e inadimplência</strong>{% else %}Todas as unidades estão parametrizadas{% endif %}</span>
                     </div>
                 </div>
                 <div class="check-item {% if resultado.sem_dados %}check-alerta{% else %}check-ok{% endif %}">
@@ -221,6 +221,15 @@
                         <span>{% if resultado.qt_inconsist_extra > 0 %}{{ resultado.qt_inconsist_extra }} ocorrências — ver aba "Taxas Extras — Divergências"{% else %}Todos os valores conferem{% endif %}</span>
                     </div>
                 </div>
+                {% if resultado.taxas_param_sem_coluna %}
+                <div class="check-item check-erro" style="grid-column: 1/-1;">
+                    <span class="check-icon">✗</span>
+                    <div>
+                        <strong>Taxas no parâmetro sem coluna correspondente na 004A</strong>
+                        <span>{{ resultado.taxas_param_sem_coluna | join(", ") }} — <strong>a inadimplência e as inconsistências dessas taxas não foram verificadas</strong>. Confirme se o nome no parâmetro é idêntico ao nome da coluna no relatório 004A.</span>
+                    </div>
+                </div>
+                {% endif %}
                 <div class="check-item {% if resultado.qt_prob_agua > 0 %}check-alerta{% else %}check-ok{% endif %}">
                     <span class="check-icon">{% if resultado.qt_prob_agua > 0 %}!{% else %}✓{% endif %}</span>
                     <div>
