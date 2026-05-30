@@ -6,11 +6,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from app.services.parametros import ler_parametros
-
-
-class ValidacaoError(Exception):
-    """Erro de validação nos arquivos de entrada — mensagem amigável ao usuário."""
+from app.services.parametros import ler_parametros, ValidacaoError
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

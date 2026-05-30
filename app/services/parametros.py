@@ -20,6 +20,10 @@ import re
 import openpyxl
 
 
+class ValidacaoError(Exception):
+    """Erro de validação nos arquivos de entrada — mensagem amigável ao usuário."""
+
+
 CAMPOS_OBRIGATORIOS = [
     ("taxa_ord_padrao",  "Taxa Ordinária Padrão"),
     ("dia_vencimento",   "Dia de Vencimento"),
@@ -56,16 +60,42 @@ def _parse_periodo(texto):
     return None
 
 
+_ANCORAS = [
+    (8,  1, "PARÂMETROS GLOBAIS"),
+    (10, 1, "Parâmetro *"),
+    (10, 2, "Valor"),
+    (18, 1, "TAXAS EXTRAS (opcional)"),
+    (20, 1, "Nome da Taxa"),
+    (20, 2, "Valor (R$)"),
+    (20, 3, "Início (mmm/aaaa)"),
+    (20, 4, "Fim (mmm/aaaa)"),
+    (33, 1, "Unidade"),
+    (33, 2, "Taxa Ordinária (R$)"),
+]
+
+
 def ler_parametros(path: str) -> dict:
     """
     Lê a planilha de parâmetros e retorna um dicionário estruturado.
     Inclui lista 'campos_faltantes' com os campos obrigatórios ausentes.
     """
+    from app.services.conciliacao import ValidacaoError
+
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb["Parâmetros"]
 
     def v(row, col):
         return ws.cell(row=row, column=col).value
+
+    # Valida âncoras estruturais — detecta linhas ou colunas inseridas/removidas
+    for row, col, esperado in _ANCORAS:
+        encontrado = str(v(row, col) or "").strip()
+        if encontrado != esperado:
+            raise ValidacaoError(
+                f"A planilha de parâmetros está com estrutura inesperada. "
+                f"Esperado na linha {row}: '{esperado}' — encontrado: '{encontrado}'. "
+                "Use o modelo original sem inserir ou remover linhas e colunas."
+            )
 
     # Síndico(s): campo B5 (coluna 2)
     # Normaliza para o mesmo formato da 004A: str(int(x)) strip leading zeros
