@@ -265,8 +265,9 @@ def processar_conciliacao(path_params: str, path_dados: str,
                         "tipo_inadin": "MEDICAO",
                     })
 
-            # Taxa Extra* por coluna (só para unidades com tem_taxa_extra)
+            # Taxa Extra* por coluna — verifica flag individual da unidade
             if p.get("tem_taxa_extra"):
+                flags = p.get("taxas_extras_flag", {})
                 for col in cols_extra_004a:
                     taxa_param = next(
                         (te for te in params.get("taxas_extras", [])
@@ -275,6 +276,8 @@ def processar_conciliacao(path_params: str, path_dados: str,
                     )
                     if taxa_param is None or not (taxa_param.get("valor") or 0) >= 0.05:
                         continue
+                    if not flags.get(taxa_param["nome"], True):
+                        continue  # unidade não cobra esta taxa específica
                     inicio = taxa_param.get("inicio")
                     fim    = taxa_param.get("fim")
                     no_periodo = True
@@ -384,6 +387,12 @@ def processar_conciliacao(path_params: str, path_dados: str,
         fim     = taxa_param["fim"]
 
         for unidade, grp in df_e_unidades.groupby("Unidade"):
+            # Verifica flag individual da unidade para esta taxa
+            p_unit = params["unidades"].get(unidade, {})
+            flags  = p_unit.get("taxas_extras_flag", {})
+            if flags and not flags.get(taxa_param["nome"], True):
+                continue  # unidade não cobra esta taxa
+
             for _, row in grp.iterrows():
                 venc = row["Vencimento_dt"]
                 if pd.isna(venc):

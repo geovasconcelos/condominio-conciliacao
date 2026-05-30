@@ -117,7 +117,10 @@ def ler_parametros(path: str) -> dict:
             "obs":    v(row, 5),
         })
 
-    # Matriz por unidade (linha 34 em diante, cols A-D): Unidade | Taxa Ord. | Taxa Extra S/N | Obs
+    # Matriz por unidade: cols A=Unidade, B=Taxa Ord., C..C+N-1=S/N por taxa extra, última=Obs
+    n_extras = len(params["taxas_extras"])
+    col_obs  = 3 + n_extras  # coluna de observações desloca conforme número de taxas
+
     for row in range(34, ws.max_row + 1):
         unidade_raw = v(row, 1)
         if not unidade_raw:
@@ -127,10 +130,17 @@ def ler_parametros(path: str) -> dict:
         except (ValueError, TypeError):
             unidade = str(unidade_raw).strip()
 
+        # Uma entrada por taxa extra: {nome_da_taxa: bool}
+        taxas_extras_flag = {
+            taxa["nome"]: str(v(row, 3 + i) or "N").strip().upper() == "S"
+            for i, taxa in enumerate(params["taxas_extras"])
+        }
+
         params["unidades"][unidade] = {
-            "taxa_ordinaria": _to_float(v(row, 2)),   # None → usa padrão global
-            "tem_taxa_extra": str(v(row, 3) or "N").strip().upper() == "S",
-            "observacoes":    v(row, 4),
+            "taxa_ordinaria":   _to_float(v(row, 2)),
+            "taxas_extras_flag": taxas_extras_flag,
+            "tem_taxa_extra":   any(taxas_extras_flag.values()),  # atalho para compatibilidade
+            "observacoes":      v(row, col_obs),
         }
 
     return params
