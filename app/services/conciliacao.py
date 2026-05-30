@@ -41,12 +41,6 @@ def _fmt_brl(v):
     return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
 
 
-NUMERIC_COLS_BASE = [
-    "Tarifa Liquidação Boleto", "Taxa de Água", "Medição e Leitura de Água",
-    "Taxa Ordinária", "Receita com Multas", "Outros", "Total",
-]
-
-
 def _norm_nome(s: str) -> str:
     """Normaliza nome para comparação: minúsculo e espaços colapsados."""
     return " ".join(str(s).strip().split()).lower()
@@ -63,6 +57,13 @@ TIPOS_COBRANCA_VALIDOS = {"NORMAL", "EXTRA", "ACORDO"}
 
 def _carregar_dados(path: str) -> pd.DataFrame:
     df = pd.read_excel(path, header=3)
+
+    ausentes_ab = [c for c in ["Id Condomínio", "Condomínio"] if c not in df.columns]
+    if ausentes_ab:
+        raise ValidacaoError(
+            "Erro: Colunas de ID e Nome não encontradas na planilha de dados. "
+            "Certifique-se de que o relatório 004A foi exportado no formato Excel, não PDF."
+        )
 
     ausentes = [c for c in COLUNAS_OBRIGATORIAS if c not in df.columns]
     if ausentes:
@@ -96,12 +97,12 @@ def _carregar_dados(path: str) -> pd.DataFrame:
             f"Valores aceitos: {', '.join(sorted(TIPOS_COBRANCA_VALIDOS))}."
         )
 
-    for col in NUMERIC_COLS_BASE:
-        if col in df.columns:
-            df[col] = df[col].apply(_br_to_float)
-    for col in df.columns:
-        if str(col).startswith("Taxa Extra"):
-            df[col] = df[col].apply(_br_to_float)
+    # Converte por posição: todas as colunas de composição entre Crédito e Total
+    cols = df.columns.tolist()
+    cols_composicao = cols[cols.index("Crédito") + 1 : cols.index("Total")]
+    for col in cols_composicao:
+        df[col] = df[col].apply(_br_to_float)
+    df["Total"] = df["Total"].apply(_br_to_float)
 
     df["Vencimento_dt"] = df["Vencimento"].apply(_parse_date)
     df["Credito_dt"]    = df["Crédito"].apply(_parse_date)
@@ -130,6 +131,10 @@ def processar_conciliacao(path_params: str, path_dados: str,
         ) from e
 
     df     = _carregar_dados(path_dados)
+
+    # Detecta coluna "Outros" com valores (limite de 11 categorias atingido)
+    tem_outros = "Outros" in df.columns and df["Outros"].fillna(0).abs().sum() > 0.01
+    valor_outros_total = df["Outros"].fillna(0).sum() if tem_outros else 0.0
 
     df_normal = df[df["Tipo Cobrança"] == "NORMAL"].copy()
     df_extra  = df[df["Tipo Cobrança"] == "EXTRA"].copy()
@@ -588,6 +593,9 @@ def processar_conciliacao(path_params: str, path_dados: str,
         "total_acordos":      len(df_acordo),
         "unidades_acordo":    df_acordo["Unidade"].unique().tolist(),
         "valor_acordos":      _fmt_brl(df_acordo["Total"].sum()),
+        # Coluna "Outros" (limite de 11 categorias)
+        "tem_outros":         tem_outros,
+        "valor_outros":       _fmt_brl(valor_outros_total) if tem_outros else None,
     }
 
     # Gera Excel
@@ -1399,6 +1407,25 @@ def _gerar_excel(df, atrasados_sem_multa,
        "E65100" if resultado["multa_inconsistente_qt"] else "2E7D32"); r+=1
     kv(ws,r,"Multa sobre taxa ordinária zero",resultado["multa_em_zero_qt"],
        "E65100" if resultado["multa_em_zero_qt"] else "2E7D32"); r+=1
+
+    # Coluna "Outros"
+    if resultado.get("tem_outros"):
+        r+=1; titulo(ws,"ATENÇÃO — COLUNA 'OUTROS'",r); r+=1
+        kv(ws,r,"Valor agrupado em 'Outros'",resultado["valor_outros"],"E65100"); r+=1
+        kv(ws,r,"Orientação",
+           "Para detalhamento completo, extraia o relatório com filtros específicos por categoria.",
+           "E65100"); r+=1
+
+    # Acordos
+    r+=1; titulo(ws,"ACORDOS",r); r+=1
+    kv(ws,r,"Acordos registrados",resultado["total_acordos"],
+       "E65100" if resultado["total_acordos"] else "2E7D32"); r+=1
+    if resultado["total_acordos"]:
+        kv(ws,r,"Unidades com acordo",", ".join(resultado["unidades_acordo"]),"E65100"); r+=1
+        kv(ws,r,"Valor total dos acordos",resultado["valor_acordos"],"E65100"); r+=1
+        kv(ws,r,"Relatório complementar",
+           "Para detalhamento de juros e multas dos acordos, solicite o relatório 28A (Acordo Detalhado).",
+           "E65100"); r+=1
 
     # Conferência PDF (só cria se PDF foi comparado)
     if resultado.get("pdf_comparado"):
