@@ -147,10 +147,7 @@ def ler_parametros(path: str) -> dict:
             "obs":    v(row, 5),
         })
 
-    # Matriz por unidade: A=Unidade, B=Taxa Ord., C/D/E=S/N por taxa (até 3), F=Obs (fixo)
-    n_extras = len(params["taxas_extras"])
-    col_obs  = 6  # Observações sempre na col F, independente de quantas taxas existem
-
+    # Matriz por unidade: A=Unidade, B=Taxa Ord., C=Taxa Extra S/N (todas), D=Obs
     for row in range(34, ws.max_row + 1):
         unidade_raw = v(row, 1)
         if not unidade_raw:
@@ -160,17 +157,12 @@ def ler_parametros(path: str) -> dict:
         except (ValueError, TypeError):
             unidade = str(unidade_raw).strip()
 
-        # Uma entrada por taxa extra: {nome_da_taxa: bool}
-        taxas_extras_flag = {
-            taxa["nome"]: str(v(row, 3 + i) or "N").strip().upper() == "S"
-            for i, taxa in enumerate(params["taxas_extras"])
-        }
-
+        tem = str(v(row, 3) or "N").strip().upper() == "S"
         params["unidades"][unidade] = {
-            "taxa_ordinaria":   _to_float(v(row, 2)),
-            "taxas_extras_flag": taxas_extras_flag,
-            "tem_taxa_extra":   any(taxas_extras_flag.values()),  # atalho para compatibilidade
-            "observacoes":      v(row, col_obs),
+            "taxa_ordinaria":    _to_float(v(row, 2)),
+            "taxas_extras_flag": {t["nome"]: tem for t in params["taxas_extras"]},
+            "tem_taxa_extra":    tem,
+            "observacoes":       v(row, 4),
         }
 
     return params
